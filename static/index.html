@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MIMIC-IV Clinical Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    />
+    <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <!-- ═══════════════════════════ HEADER ══════════════════════════════════ -->
+    <header class="glass-header sticky top-0 z-50">
+      <div
+        class="max-w-screen-xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4"
+      >
+        <!-- Logo / Title -->
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="logo-icon shrink-0">
+            <i class="fas fa-hospital-user"></i>
+          </div>
+          <div class="min-w-0">
+            <h1
+              class="text-base sm:text-lg font-bold text-white leading-tight truncate"
+            >
+              MIMIC-IV Clinical Dashboard
+            </h1>
+            <p class="text-blue-400 text-xs hidden sm:block">
+              Beth Israel Deaconess Medical Center
+            </p>
+          </div>
+        </div>
+
+        <!-- Patient selector -->
+        <div class="flex items-center gap-2 sm:gap-3 shrink-0">
+          <div class="patient-select-container">
+            <i class="fas fa-user-injured select-icon"></i>
+            <select id="patientSelect" class="patient-select">
+              <option value="">— Select Patient —</option>
+            </select>
+            <i class="fas fa-chevron-down chevron-icon"></i>
+          </div>
+          <div id="patientBadge" class="patient-badge hidden">
+            <span class="pulse-dot"></span>
+            <span>Active</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- ══════════════════════ PATIENT INFO BAR ══════════════════════════════ -->
+    <div id="patientInfoBar" class="info-bar hidden">
+      <div
+        class="max-w-screen-xl mx-auto px-4 sm:px-6 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm"
+      >
+        <span
+          id="piName"
+          class="font-bold text-white text-sm sm:text-base"
+        ></span>
+        <span class="text-gray-700 hidden sm:inline">|</span>
+        <span id="piGenderAge" class="text-gray-300 text-xs sm:text-sm"></span>
+        <span class="text-gray-700 hidden sm:inline">|</span>
+        <span id="piRace" class="text-gray-400 text-xs hidden sm:inline"></span>
+        <span class="text-gray-700 hidden md:inline">|</span>
+        <span
+          id="piMrn"
+          class="text-gray-500 font-mono text-xs bg-gray-900 px-2 py-0.5 rounded hidden md:inline"
+        ></span>
+        <span
+          id="piDeceased"
+          class="hidden bg-red-950 border border-red-800/60 text-red-400 text-xs px-2.5 py-0.5 rounded-full font-medium"
+        >
+          <i class="fas fa-cross text-[9px] mr-1"></i>Deceased
+        </span>
+      </div>
+    </div>
+
+    <!-- ══════════════════════ TAB NAVIGATION ════════════════════════════════ -->
+    <div id="tabNav" class="tab-nav-bg hidden sticky z-40" style="top: 57px">
+      <div class="max-w-screen-xl mx-auto px-4 sm:px-6">
+        <nav class="flex overflow-x-auto scrollbar-hide" id="tabBar">
+          <button class="tab-btn active" data-tab="overview">
+            <i class="fas fa-chart-line mr-2"></i
+            ><span class="tab-label">Patient Overview</span>
+          </button>
+          <button class="tab-btn" data-tab="complaint">
+            <i class="fas fa-comment-medical mr-2"></i
+            ><span class="tab-label">Chief Complaint</span>
+          </button>
+          <button class="tab-btn" data-tab="validation">
+            <i class="fas fa-stethoscope mr-2"></i
+            ><span class="tab-label">Diagnosis &amp; Treatment</span>
+          </button>
+          <button class="tab-btn" data-tab="encounters">
+            <i class="fas fa-calendar-days mr-2"></i
+            ><span class="tab-label">Encounters</span>
+          </button>
+        </nav>
+      </div>
+    </div>
+
+    <!-- ══════════════════════ LOADING STATE ═════════════════════════════════ -->
+    <div id="loadingState" class="hidden">
+      <div class="max-w-screen-xl mx-auto px-6 py-32 text-center">
+        <div class="loading-spinner mx-auto mb-6"></div>
+        <p class="text-gray-300 text-lg font-medium">Loading patient record…</p>
+        <p class="text-gray-600 text-sm mt-1">Fetching clinical data</p>
+      </div>
+    </div>
+
+    <!-- ══════════════════════ EMPTY STATE ═══════════════════════════════════ -->
+    <div
+      id="emptyState"
+      class="max-w-screen-xl mx-auto px-4 sm:px-6 py-16 sm:py-24 text-center"
+    >
+      <div class="empty-state-card mx-auto max-w-md">
+        <div class="empty-icon-wrapper mx-auto mb-6">
+          <i class="fas fa-hospital text-4xl text-blue-400"></i>
+        </div>
+        <h2 class="text-xl sm:text-2xl font-bold text-white mb-3">
+          MIMIC-IV Clinical Dashboard
+        </h2>
+        <p class="text-gray-400 leading-relaxed text-sm mb-8">
+          Select a patient from the dropdown above to view their complete
+          clinical record — demographics, vitals, medications, lab results,
+          diagnoses, and encounter history.
+        </p>
+        <div class="flex flex-wrap justify-center gap-2">
+          <span class="feature-chip"
+            ><i class="fas fa-id-card mr-1.5 text-blue-400"></i
+            >Demographics</span
+          >
+          <span class="feature-chip"
+            ><i class="fas fa-heart-pulse mr-1.5 text-red-400"></i>Vitals</span
+          >
+          <span class="feature-chip"
+            ><i class="fas fa-pills mr-1.5 text-violet-400"></i
+            >Medications</span
+          >
+          <span class="feature-chip"
+            ><i class="fas fa-flask-vial mr-1.5 text-indigo-400"></i>Lab
+            Results</span
+          >
+          <span class="feature-chip"
+            ><i class="fas fa-stethoscope mr-1.5 text-rose-400"></i
+            >Diagnoses</span
+          >
+          <span class="feature-chip"
+            ><i class="fas fa-calendar-days mr-1.5 text-sky-400"></i
+            >Encounters</span
+          >
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════ DASHBOARD ═════════════════════════════════════ -->
+    <main
+      id="dashboard"
+      class="hidden max-w-screen-xl mx-auto px-4 sm:px-6 py-6"
+    >
+      <!-- ─────────────── TAB 1: OVERVIEW ─────────────────────────────────── -->
+      <div id="tab-overview" class="tab-pane space-y-5">
+        <!-- Demographics -->
+        <section class="card">
+          <div
+            class="card-header"
+            style="
+              background: linear-gradient(135deg, #1a3a6e 0%, #1e4976 100%);
+            "
+          >
+            <div class="header-icon-wrap"><i class="fas fa-id-card"></i></div>
+            <span>Demographics</span>
+          </div>
+          <div
+            id="demoContent"
+            class="p-5 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4"
+          ></div>
+        </section>
+
+        <!-- Vitals + Allergies -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          <section class="card lg:col-span-2">
+            <div
+              class="card-header"
+              style="
+                background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%);
+              "
+            >
+              <div class="header-icon-wrap">
+                <i class="fas fa-heart-pulse"></i>
+              </div>
+              <span>Vitals</span>
+              <span class="ml-auto text-red-200/70 text-xs font-normal"
+                >Most recent values</span
+              >
+            </div>
+            <div
+              id="vitalsContent"
+              class="p-5 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4"
+            ></div>
+          </section>
+
+          <section class="card">
+            <div
+              class="card-header"
+              style="
+                background: linear-gradient(135deg, #78350f 0%, #92400e 100%);
+              "
+            >
+              <div class="header-icon-wrap">
+                <i class="fas fa-triangle-exclamation"></i>
+              </div>
+              <span>Allergies</span>
+            </div>
+            <div class="p-5 text-sm text-gray-500 flex items-center gap-2.5">
+              <i
+                class="fas fa-circle-check text-emerald-500 text-base shrink-0"
+              ></i>
+              <span>No known allergies recorded in this dataset</span>
+            </div>
+          </section>
+        </div>
+
+        <!-- Medications + Conditions -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <section class="card">
+            <div
+              class="card-header"
+              style="
+                background: linear-gradient(135deg, #4c1d95 0%, #5b21b6 100%);
+              "
+            >
+              <div class="header-icon-wrap"><i class="fas fa-pills"></i></div>
+              <span>Current Medications</span>
+              <span id="medCount" class="badge"></span>
+            </div>
+            <div id="medsContent" class="max-h-72 overflow-y-auto"></div>
+            <div
+              id="medsEmpty"
+              class="hidden p-5 text-sm text-gray-500 flex items-center gap-2"
+            >
+              <i class="fas fa-info-circle text-gray-600"></i> No medications
+              recorded.
+            </div>
+          </section>
+
+          <section class="card">
+            <div
+              class="card-header"
+              style="
+                background: linear-gradient(135deg, #134e4a 0%, #115e59 100%);
+              "
+            >
+              <div class="header-icon-wrap">
+                <i class="fas fa-notes-medical"></i>
+              </div>
+              <span>Past Medical History</span>
+              <span id="condCount" class="badge"></span>
+            </div>
+            <div id="condsContent" class="max-h-72 overflow-y-auto"></div>
+            <div id="condsEmpty" class="hidden p-5 text-sm text-gray-500">
+              No conditions recorded.
+            </div>
+          </section>
+        </div>
+
+        <!-- Suggested Tests + Labs -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          <section class="card">
+            <div
+              class="card-header"
+              style="
+                background: linear-gradient(135deg, #0c4a6e 0%, #075985 100%);
+              "
+            >
+              <div class="header-icon-wrap">
+                <i class="fas fa-vial-circle-check"></i>
+              </div>
+              <span>Suggested Tests</span>
+              <span id="testsCount" class="badge"></span>
+            </div>
+            <div id="testsContent" class="max-h-64 overflow-y-auto"></div>
+            <div id="testsEmpty" class="hidden p-5 text-sm text-gray-500">
+              No diagnostic reports.
+            </div>
+          </section>
+
+          <section class="card lg:col-span-2">
+            <div
+              class="card-header"
+              style="
+                background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%);
+              "
+            >
+              <div class="header-icon-wrap">
+                <i class="fas fa-flask-vial"></i>
+              </div>
+              <span>Lab Report Values</span>
+              <span id="labCount" class="badge"></span>
+              <div class="lab-search-wrap">
+                <i class="fas fa-magnifying-glass"></i>
+                <input
+                  id="labSearch"
+                  type="text"
+                  placeholder="Filter labs…"
+                  class="lab-search-input"
+                />
+              </div>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="labs-thead">
+                  <tr>
+                    <th class="px-4 py-3 text-left">Test</th>
+                    <th class="px-4 py-3 text-right">Result</th>
+                    <th class="px-4 py-3 text-center">Flag</th>
+                    <th class="px-4 py-3 text-center hidden sm:table-cell">
+                      Ref Range
+                    </th>
+                    <th class="px-4 py-3 text-left hidden md:table-cell">
+                      Date
+                    </th>
+                  </tr>
+                </thead>
+                <tbody id="labsBody"></tbody>
+              </table>
+            </div>
+            <div id="labsEmpty" class="hidden p-5 text-sm text-gray-500">
+              No lab results recorded.
+            </div>
+          </section>
+        </div>
+      </div>
+      <!-- /tab-overview -->
+
+      <!-- ─────────────── TAB 2: CHIEF COMPLAINT ──────────────────────────── -->
+      <div id="tab-complaint" class="tab-pane hidden space-y-5">
+        <section class="card">
+          <div
+            class="card-header py-5"
+            style="
+              background: linear-gradient(135deg, #7c2d12 0%, #9a3412 100%);
+            "
+          >
+            <div class="bg-white/10 rounded-xl p-3 shrink-0">
+              <i class="fas fa-comment-medical text-2xl"></i>
+            </div>
+            <div>
+              <h2 class="text-lg sm:text-xl font-bold">Chief Complaint</h2>
+              <p class="text-orange-200/80 text-sm">
+                Primary reason for the most recent visit
+              </p>
+            </div>
+          </div>
+          <div class="p-5 sm:p-8">
+            <div class="complaint-box mb-8">
+              <p
+                id="chiefComplaintText"
+                class="text-lg sm:text-2xl text-white font-medium leading-snug"
+              >
+                —
+              </p>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div>
+                <h3 class="section-sub-header">Admission Details</h3>
+                <div id="admissionDetails" class="space-y-3 text-sm"></div>
+              </div>
+              <div>
+                <h3 class="section-sub-header">
+                  Associated Diagnoses (Most Recent Encounter)
+                </h3>
+                <div id="primaryDiagnoses" class="space-y-2 text-sm"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+      <!-- /tab-complaint -->
+
+      <!-- ─────────────── TAB 3: DIAGNOSIS & TREATMENT ────────────────────── -->
+      <div id="tab-validation" class="tab-pane hidden">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <section class="card">
+            <div
+              class="card-header"
+              style="
+                background: linear-gradient(135deg, #881337 0%, #9f1239 100%);
+              "
+            >
+              <div class="header-icon-wrap">
+                <i class="fas fa-stethoscope"></i>
+              </div>
+              <span>Suggested Diagnoses</span>
+              <span id="diagCount" class="badge"></span>
+            </div>
+            <div id="diagContent" class="max-h-[520px] overflow-y-auto"></div>
+            <div id="diagEmpty" class="hidden p-5 text-sm text-gray-500">
+              No diagnoses recorded.
+            </div>
+          </section>
+
+          <div class="space-y-5">
+            <section class="card">
+              <div
+                class="card-header"
+                style="
+                  background: linear-gradient(135deg, #4a044e 0%, #701a75 100%);
+                "
+              >
+                <div class="header-icon-wrap">
+                  <i class="fas fa-prescription-bottle-medical"></i>
+                </div>
+                <span>Treatment &amp; Medications</span>
+              </div>
+              <div id="treatMedsContent" class="max-h-60 overflow-y-auto"></div>
+              <div id="treatMedsEmpty" class="hidden p-5 text-sm text-gray-500">
+                No medications recorded.
+              </div>
+            </section>
+
+            <section class="card">
+              <div
+                class="card-header"
+                style="
+                  background: linear-gradient(135deg, #14532d 0%, #166534 100%);
+                "
+              >
+                <div class="header-icon-wrap">
+                  <i class="fas fa-syringe"></i>
+                </div>
+                <span>Procedures Performed</span>
+                <span id="procCount" class="badge"></span>
+              </div>
+              <div id="procsContent" class="max-h-56 overflow-y-auto"></div>
+              <div id="procsEmpty" class="hidden p-5 text-sm text-gray-500">
+                No procedures recorded.
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+      <!-- /tab-validation -->
+
+      <!-- ─────────────── TAB 4: ENCOUNTERS ───────────────────────────────── -->
+      <div id="tab-encounters" class="tab-pane hidden space-y-4">
+        <div class="flex items-center justify-between mb-1">
+          <h2
+            class="text-base sm:text-lg font-semibold text-white flex items-center gap-2"
+          >
+            <i class="fas fa-timeline text-blue-400"></i>All Encounters
+          </h2>
+          <span
+            id="encTotal"
+            class="text-xs text-gray-400 bg-gray-800/80 border border-gray-700 px-3 py-1 rounded-full"
+          ></span>
+        </div>
+        <div id="encountersContent" class="space-y-4"></div>
+        <div
+          id="encountersEmpty"
+          class="hidden p-10 text-center text-gray-500 text-sm"
+        >
+          No encounter records found.
+        </div>
+      </div>
+      <!-- /tab-encounters -->
+    </main>
+    <!-- /dashboard -->
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

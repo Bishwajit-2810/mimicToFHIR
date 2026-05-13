@@ -1,0 +1,11 @@
+[project]
+name = "mimic-iv-clinical-database-demo-2-2"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "psycopg2-binary>=2.9",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+]
