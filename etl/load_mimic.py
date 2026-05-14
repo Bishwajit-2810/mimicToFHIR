@@ -3,15 +3,16 @@
 
 import gzip
 import io
+import os
 import sys
 import time
 from pathlib import Path
 
 import psycopg2
 
-DSN = "host=localhost port=5433 dbname=mimiciv user=mimic password=mimic"
+DSN = os.getenv("MIMIC_DSN", "host=localhost port=5433 dbname=mimiciv user=mimic password=mimic")
 
-BASE = Path(__file__).parent
+BASE = Path(__file__).parent.parent
 
 TABLES = [
     # (schema, table, csv_path)

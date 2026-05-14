@@ -1,11 +1,16 @@
 [project]
 name = "mimic-iv-clinical-database-demo-2-2"
 version = "0.1.0"
-description = "Add your description here"
+description = "MIMIC-IV clinical database demo with PostgreSQL, FHIR export, and dashboards."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "psycopg2-binary>=2.9",
     "fastapi>=0.111",
     "uvicorn[standard]>=0.30",
+    "pandas>=3.0.3",
+    "numpy>=2.4.4",
 ]
+
+[project.scripts]
+mimic-demo = "main:main"

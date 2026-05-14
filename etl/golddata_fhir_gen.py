@@ -32,18 +32,17 @@ import argparse
 import json
 import os
 import sys
-from collections import defaultdict
 from itertools import groupby
 from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
 
-import golddata_bundle_builder as bb
+from etl import golddata_builder as bb
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-_DEFAULT_DSN = "host=localhost port=5433 dbname=mimiciv user=mimic password=mimic"
+_DEFAULT_DSN = "host=localhost port=5434 dbname=mimiciv user=mimic password=mimic"
 
 DSN = os.getenv("GOLDDATA_DSN") or os.getenv("MIMIC_DSN") or _DEFAULT_DSN
 OUTPUT_DIR = Path(os.getenv("GOLDDATA_OUT", "golddata_fhir_bundles"))
@@ -255,12 +254,14 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> tuple[int, int | 
         if enc_uid:
             add(bb.build_icu_procedure_observation(row, patient_uid, enc_uid))
 
-    # ── Medication requests — include all (medications administered) ───────────
+    # ── Medication requests — exclude latest encounter ────────────────────────
     cur.execute(
         "SELECT * FROM hosp.prescriptions WHERE subject_id = %s",
         (subject_id,),
     )
     for row in cur.fetchall():
+        if row["hadm_id"] == latest_hadm:
+            continue  # intentional exclusion — treatment data for blinded encounter
         enc_uid = hosp_enc_uids.get(row["hadm_id"])
         if enc_uid:
             add(bb.build_medication_request(row, patient_uid, enc_uid))

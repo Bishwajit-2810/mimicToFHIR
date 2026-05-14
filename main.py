@@ -6,19 +6,19 @@ from pathlib import Path
 
 
 def cmd_load(args):
-    from load_mimic import main as load_main
+    from etl.load_mimic import main as load_main
     load_main()
 
 
 def cmd_convert(args):
-    from mimic_to_fhir import convert, DSN, OUTPUT_DIR
+    from etl.mimic_to_fhir import convert, DSN, OUTPUT_DIR
     dsn = args.dsn or DSN
     out = Path(args.output) if args.output else OUTPUT_DIR
     convert(dsn=dsn, output_dir=out)
 
 
 def cmd_bundle(args):
-    from mimic_to_bundle import convert, DSN, OUTPUT_DIR
+    from etl.mimic_to_bundle import convert, DSN, OUTPUT_DIR
     dsn = args.dsn or DSN
     out = Path(args.output) if args.output else OUTPUT_DIR
     convert(dsn=dsn, output_dir=out)

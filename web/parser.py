@@ -1,18 +1,8 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from pathlib import Path
-from functools import lru_cache
-from datetime import datetime
-import json
+"""Shared FHIR bundle parsing logic used by both web/app.py and web/golddata_app.py."""
+
 import re
+from datetime import datetime
 
-app = FastAPI(title="MIMIC-IV Clinical Dashboard")
-
-BUNDLES_DIR = Path("fhir_bundles")
-STATIC_DIR = Path("static")
-
-# ── LOINC mappings for vital signs ──────────────────────────────────────────
 VITAL_LOINC = {
     "8867-4": "Heart Rate",
     "8480-6": "Systolic BP",
@@ -47,9 +37,6 @@ VITAL_NORMAL = {
 }
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-
 def fmt_dt(raw: str | None) -> str | None:
     if not raw:
         return None
@@ -72,9 +59,6 @@ def concept_text(obj: dict) -> str:
         if c.get("code"):
             return c["code"]
     return ""
-
-
-# ── Per-resource parsers ──────────────────────────────────────────────────────
 
 
 def _demographics(patient: dict, all_encounters: list) -> dict:
@@ -109,7 +93,6 @@ def _demographics(patient: dict, all_encounters: list) -> dict:
     birth_date = patient.get("birthDate", "")
     deceased = patient.get("deceasedDateTime", "")
 
-    # Age at most-recent encounter
     age = None
     if birth_date and all_encounters:
         dates = [
@@ -149,7 +132,6 @@ def _demographics(patient: dict, all_encounters: list) -> dict:
 
 
 def _parse_vital_obs(obs: dict) -> dict | None:
-    """Parse a single vital-sign Observation into a dict; returns None if unrecognised."""
     loinc = next(
         (
             c.get("code")
@@ -197,7 +179,6 @@ def _vitals(obs_list: list) -> list:
 
 
 def _vitals_by_encounter(obs_list: list) -> dict[str, list]:
-    """All vital observations grouped by encounterRef (no deduplication)."""
     groups: dict[str, list] = {}
     for obs in obs_list:
         parsed = _parse_vital_obs(obs)
@@ -211,7 +192,6 @@ def _vitals_by_encounter(obs_list: list) -> dict[str, list]:
 
 
 def _parse_lab_obs(obs: dict) -> dict | None:
-    """Parse a single lab Observation into a dict; returns None if no name."""
     name = concept_text(obs.get("code", {}))
     if not name:
         return None
@@ -256,7 +236,6 @@ def _labs(obs_list: list) -> list:
 
 
 def _labs_by_encounter(obs_list: list) -> dict[str, list]:
-    """All lab observations grouped by encounterRef (no deduplication)."""
     groups: dict[str, list] = {}
     for obs in obs_list:
         parsed = _parse_lab_obs(obs)
@@ -415,7 +394,6 @@ def _procedures(procs: list) -> list:
 
 
 def _practitioners(pract_list: list) -> dict:
-    """Return {urn:uuid:... : {name, providerId}} for quick encounter lookup."""
     result = {}
     for p in pract_list:
         uid = "urn:uuid:" + p.get("id", "")
@@ -430,9 +408,6 @@ def _practitioners(pract_list: list) -> dict:
         )
         result[uid] = {"name": full, "providerId": ident}
     return result
-
-
-# ── Bundle parser ─────────────────────────────────────────────────────────────
 
 
 def parse_bundle(bundle: dict) -> dict:
@@ -495,8 +470,6 @@ def parse_bundle(bundle: dict) -> dict:
     vitals_by_enc = _vitals_by_encounter(resources["ObsVital"])
     labs_by_enc = _labs_by_encounter(resources["ObsLab"])
 
-    # Attach encounter-specific data.
-    # Vitals recorded against ICU children are merged up into the parent.
     for enc in encs:
         eid = enc["id"]
 
@@ -513,10 +486,8 @@ def parse_bundle(bundle: dict) -> dict:
         enc_rpts = [r for r in reports if r.get("encounterRef") == eid]
         enc_labs = labs_by_enc.get(eid, [])
 
-        # Primary diagnosis = chief complaint for this encounter
         chief_complaint = enc_conds[0]["name"] if enc_conds else None
 
-        # Resolve attending providers from participant references
         providers = [
             prac_lookup[ref]
             for ref in enc.get("participantRefs", [])
@@ -534,7 +505,6 @@ def parse_bundle(bundle: dict) -> dict:
             "labs": enc_labs,
         }
 
-    # Chief complaint: primary condition of the most-recent encounter
     chief = "Not recorded"
     if encs and conds:
         recent_id = encs[0]["id"]
@@ -556,48 +526,3 @@ def parse_bundle(bundle: dict) -> dict:
         "encounters": encs,
         "chiefComplaint": chief,
     }
-
-
-# ── Bundle file cache ─────────────────────────────────────────────────────────
-
-
-@lru_cache(maxsize=15)
-def _read_bundle(patient_id: str) -> dict:
-    path = BUNDLES_DIR / f"{patient_id}.json"
-    if not path.exists():
-        raise FileNotFoundError(patient_id)
-    with open(path) as f:
-        return json.load(f)
-
-
-# ── API routes ────────────────────────────────────────────────────────────────
-
-
-@app.get("/api/patients")
-def list_patients():
-    ids = sorted(p.stem for p in BUNDLES_DIR.glob("*.json"))
-    return {"patients": ids}
-
-
-@app.get("/api/patients/{patient_id}")
-def get_patient(patient_id: str):
-    try:
-        bundle = _read_bundle(patient_id)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
-    return parse_bundle(bundle)
-
-
-# ── Static files & SPA root ───────────────────────────────────────────────────
-
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-
-@app.get("/")
-def root():
-    return FileResponse(str(STATIC_DIR / "index.html"))
-
-
-@app.get("/favicon.ico", include_in_schema=False)
-def favicon():
-    return FileResponse(str(STATIC_DIR / "favicon.svg"), media_type="image/svg+xml")
