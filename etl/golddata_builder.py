@@ -3,10 +3,14 @@
 Standalone FHIR R4 resource builders for the golddata pipeline.
 
 Completely independent from mimic_to_bundle.py:
-  - Different UUID namespace prevents ID collisions with standard_fhir bundles.
+  - Different UUID namespace prevents ID collisions with standard fhir bundles.
   - Every resource gets a meta.tag marking it as "golddata_fhir".
   - Helpers are duplicated here intentionally so this module never imports from
     the existing pipeline and cannot break it.
+
+Golddata bundles blind the latest encounter: Condition (diagnoses) and
+MedicationRequest (treatments) are excluded; Observation (vitals, labs, OMR),
+DiagnosticReport, Procedure, and Encounter metadata are fully retained.
 
 Called exclusively by golddata_fhir_gen.py.
 """
@@ -31,7 +35,7 @@ _RANGE_RE = re.compile(r"^(\d*\.?\d+)-(\d*\.?\d+)$")
 _GOLDDATA_TAG = {
     "system": "http://mimic.mit.edu/fhir/tag/pipeline",
     "code": "golddata_fhir",
-    "display": "GoldData FHIR — diagnosis-blind latest encounter",
+    "display": "GoldData FHIR — diagnosis & treatment blind, latest encounter",
 }
 
 

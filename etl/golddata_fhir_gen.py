@@ -6,19 +6,19 @@ Produces one FHIR R4 transaction bundle per patient into golddata_fhir_bundles/.
 
 Key difference from the standard pipeline (mimic_to_bundle.py):
   For each patient's LATEST (most-recent) hospital encounter the following are
-  intentionally EXCLUDED to prevent outcome/diagnosis leakage:
-    • Condition resources  (ICD diagnoses)
+  intentionally EXCLUDED to prevent diagnosis/treatment leakage:
+    • Condition resources        (ICD diagnoses)
+    • MedicationRequest resources (prescribed treatments)
     • Discharge disposition from the Encounter (outcome signal)
 
 Everything else is INCLUDED for all encounters — including the latest:
     • Encounter (hospital + ICU)
     • Observation — vitals (chartevents), labs (labevents), OMR
     • Procedure  — ICD-coded procedures already performed
-    • MedicationRequest — medications administered
     • DiagnosticReport + microbiology Observations
     • ICU procedure events (as Observations)
 
-Historical encounters include full data (conditions, discharge disposition).
+Historical encounters include full data (conditions, medications, discharge disposition).
 
 Usage:
     python golddata_fhir_gen.py [--dsn DSN] [--output DIR]
@@ -311,7 +311,7 @@ def convert(dsn: str = DSN, output_dir: Path = OUTPUT_DIR) -> None:
     print(f"GoldData FHIR Generator")
     print(f"  DSN        : {dsn}")
     print(f"  Output     : {output_dir.resolve()}/")
-    print(f"  Mode       : exclude diagnoses for each patient's latest encounter\n")
+    print(f"  Mode       : exclude diagnoses & treatments for each patient's latest encounter\n")
 
     conn = psycopg2.connect(dsn)
     conn.set_session(readonly=True, autocommit=True)
@@ -353,7 +353,7 @@ def convert(dsn: str = DSN, output_dir: Path = OUTPUT_DIR) -> None:
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Generate GoldData FHIR bundles (diagnosis-blind latest encounter)."
+        description="Generate GoldData FHIR bundles (diagnosis & treatment blind for latest encounter)."
     )
     p.add_argument(
         "--dsn",
