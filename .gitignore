@@ -47,6 +47,7 @@ htmlcov/
 fhir_output/
 fhir_bundles/
 golddata_fhir_bundles/
+dataset/
 
 # PostgreSQL data (managed by Docker volume, not tracked)
 pgdata/

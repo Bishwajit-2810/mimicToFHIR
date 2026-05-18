@@ -12,6 +12,23 @@ app = FastAPI(title="MIMIC-IV Clinical Dashboard")
 BUNDLES_DIR = Path("fhir_bundles")
 STATIC_DIR = Path("static")
 
+_DATASET_INFO = {
+    "mode": "full",
+    "label": "Full Clinical Data",
+    "description": "Complete clinical record — diagnoses, medications, notes, vitals, labs",
+    "includes": {
+        "conditions": True,
+        "medications": True,
+        "notes": True,
+        "vitals": True,
+        "labs": True,
+        "procedures": True,
+        "encounters": True,
+    },
+    "color": "#3b82f6",
+    "icon": "fa-hospital-user",
+}
+
 
 @lru_cache(maxsize=15)
 def _read_bundle(patient_id: str) -> dict:
@@ -22,8 +39,16 @@ def _read_bundle(patient_id: str) -> dict:
         return json.load(f)
 
 
+@app.get("/api/info")
+def api_info():
+    count = len(list(BUNDLES_DIR.glob("*.json"))) if BUNDLES_DIR.exists() else 0
+    return {**_DATASET_INFO, "bundleCount": count}
+
+
 @app.get("/api/patients")
 def list_patients():
+    if not BUNDLES_DIR.exists():
+        return {"patients": []}
     ids = sorted(p.stem for p in BUNDLES_DIR.glob("*.json"))
     return {"patients": ids}
 

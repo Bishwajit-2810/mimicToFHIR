@@ -81,6 +81,17 @@
       </div>
     </div>
 
+    <!-- ══════════════════════ DATASET BANNER ═══════════════════════════════ -->
+    <div id="datasetBanner" class="dataset-banner hidden">
+      <div class="max-w-screen-xl mx-auto px-4 sm:px-6 py-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
+        <span id="dsBadge" class="ds-mode-badge"></span>
+        <span id="dsDesc" class="text-gray-400"></span>
+        <span class="text-gray-700 hidden sm:inline">·</span>
+        <span id="dsIncludes" class="flex flex-wrap gap-1.5"></span>
+        <span class="ml-auto text-gray-600" id="dsBundleCount"></span>
+      </div>
+    </div>
+
     <!-- ══════════════════════ TAB NAVIGATION ════════════════════════════════ -->
     <div id="tabNav" class="tab-nav-bg hidden sticky z-40" style="top: 57px">
       <div class="max-w-screen-xl mx-auto px-4 sm:px-6">
@@ -100,6 +111,10 @@
           <button class="tab-btn" data-tab="encounters">
             <i class="fas fa-calendar-days mr-2"></i
             ><span class="tab-label">Encounters</span>
+          </button>
+          <button class="tab-btn" data-tab="notes">
+            <i class="fas fa-file-medical mr-2"></i
+            ><span class="tab-label">Clinical Notes</span>
           </button>
         </nav>
       </div>
@@ -154,6 +169,10 @@
           <span class="feature-chip"
             ><i class="fas fa-calendar-days mr-1.5 text-sky-400"></i
             >Encounters</span
+          >
+          <span class="feature-chip"
+            ><i class="fas fa-file-medical mr-1.5 text-emerald-400"></i
+            >Clinical Notes</span
           >
         </div>
       </div>
@@ -470,6 +489,65 @@
         </div>
       </div>
       <!-- /tab-encounters -->
+
+      <!-- ─────────────── TAB 5: CLINICAL NOTES ──────────────────────────── -->
+      <div id="tab-notes" class="tab-pane hidden space-y-5">
+
+        <!-- Notes header bar -->
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-1">
+          <h2 class="text-base sm:text-lg font-semibold text-white flex items-center gap-2">
+            <i class="fas fa-file-medical text-emerald-400"></i>Clinical Notes
+            <span id="notesTotalBadge"
+              class="text-xs text-gray-400 bg-gray-800/80 border border-gray-700 px-3 py-1 rounded-full"></span>
+          </h2>
+          <div class="notes-search-wrap">
+            <i class="fas fa-magnifying-glass" style="color:#6e7681;"></i>
+            <input id="noteSearch" type="text" placeholder="Search notes…" class="lab-search-input" />
+          </div>
+        </div>
+
+        <!-- Discharge Summaries -->
+        <section class="card" id="dischargeSection">
+          <div class="card-header" style="background:linear-gradient(135deg,#064e3b 0%,#065f46 100%);">
+            <div class="header-icon-wrap"><i class="fas fa-file-lines"></i></div>
+            <span>Discharge Summaries</span>
+            <span id="dischargeCount" class="badge"></span>
+          </div>
+          <div id="dischargeContent" class="divide-y divide-gray-800"></div>
+          <div id="dischargeEmpty" class="hidden p-5 text-sm text-gray-500 flex items-center gap-2">
+            <i class="fas fa-info-circle text-gray-600"></i> No discharge summaries in this bundle.
+          </div>
+        </section>
+
+        <!-- Radiology Notes -->
+        <section class="card" id="radiologySection">
+          <div class="card-header" style="background:linear-gradient(135deg,#1e3a5f 0%,#1e40af 100%);">
+            <div class="header-icon-wrap"><i class="fas fa-x-ray"></i></div>
+            <span>Radiology Reports</span>
+            <span id="radiologyCount" class="badge"></span>
+          </div>
+          <div id="radiologyContent" class="divide-y divide-gray-800"></div>
+          <div id="radiologyEmpty" class="hidden p-5 text-sm text-gray-500 flex items-center gap-2">
+            <i class="fas fa-info-circle text-gray-600"></i> No radiology reports in this bundle.
+          </div>
+        </section>
+
+        <!-- Other Notes -->
+        <section class="card" id="otherNotesSection">
+          <div class="card-header" style="background:linear-gradient(135deg,#374151 0%,#4b5563 100%);">
+            <div class="header-icon-wrap"><i class="fas fa-notes-medical"></i></div>
+            <span>Other Clinical Notes</span>
+            <span id="otherNotesCount" class="badge"></span>
+          </div>
+          <div id="otherNotesContent" class="divide-y divide-gray-800"></div>
+          <div id="otherNotesEmpty" class="hidden p-5 text-sm text-gray-500 flex items-center gap-2">
+            <i class="fas fa-info-circle text-gray-600"></i> No other notes in this bundle.
+          </div>
+        </section>
+
+      </div>
+      <!-- /tab-notes -->
+
     </main>
     <!-- /dashboard -->
 

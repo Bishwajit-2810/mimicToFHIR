@@ -191,6 +191,30 @@ _MARITAL_MAP: dict[str, tuple[str, str]] = {
     "SEPARATED": ("L", "Legally Separated"),
 }
 
+_ADMISSION_CLASS: dict[str, tuple[str, str]] = {
+    "EMERGENCY":                   ("EMER", "emergency"),
+    "EU OBSERVATION":              ("EMER", "emergency"),
+    "DIRECT EMER.":                ("EMER", "emergency"),
+    "OBSERVATION ADMIT":           ("AMB",  "ambulatory"),
+    "AMBULATORY OBSERVATION":      ("AMB",  "ambulatory"),
+    "DIRECT OBSERVATION":          ("AMB",  "ambulatory"),
+    "SURGICAL SAME DAY ADMISSION": ("AMB",  "ambulatory"),
+    "ELECTIVE":                    ("IMP",  "inpatient encounter"),
+    "URGENT":                      ("IMP",  "inpatient encounter"),
+}
+
+_ENCOUNTER_SNOMED: dict[str, tuple[str, str]] = {
+    "EMER": ("50849002", "Emergency room admission"),
+    "AMB":  ("11429006", "Consultation"),
+    "IMP":  ("32485007", "Hospital admission"),
+}
+
+_SERVICE_PLACE: dict[str, tuple[str, str]] = {
+    "EMER": ("23", "Emergency Room – Hospital"),
+    "AMB":  ("22", "On Campus-Outpatient Hospital"),
+    "IMP":  ("21", "Inpatient Hospital"),
+}
+
 
 # ── resource builders ─────────────────────────────────────────────────────────
 
@@ -309,6 +333,14 @@ def build_patient(row: dict, admission: dict | None) -> dict:
     patient: dict = {
         "resourceType": "Patient",
         "id": uid,
+        "text": {
+            "status": "generated",
+            "div": (
+                f'<div xmlns="http://www.w3.org/1999/xhtml">'
+                f"MIMIC-IV Patient {row['subject_id']}"
+                f"</div>"
+            ),
+        },
         "extension": extensions,
         "identifier": [
             {
@@ -335,6 +367,7 @@ def build_patient(row: dict, admission: dict | None) -> dict:
         ],
         "gender": gender_display,
         "birthDate": f"{birth_year}-07-01",
+        "multipleBirthBoolean": False,
     }
 
     if row.get("dod"):
@@ -375,28 +408,26 @@ def build_encounter_hosp(
     row: dict, patient_uid: str, org_uid: str, provider_uid: str | None
 ) -> dict:
     uid = _uuid("encounter-hosp", row["hadm_id"])
+    adm_type_key = (row.get("admission_type") or "").upper()
+    cls_code, cls_display = _ADMISSION_CLASS.get(adm_type_key, ("IMP", "inpatient encounter"))
+    snomed_code, snomed_display = _ENCOUNTER_SNOMED[cls_code]
+    subject_id = row.get("subject_id", "")
     r: dict = {
         "resourceType": "Encounter",
         "id": uid,
         "status": "finished",
         "class": _coding(
             "http://terminology.hl7.org/CodeSystem/v3-ActCode",
-            "IMP",
-            "inpatient encounter",
+            cls_code,
+            cls_display,
         ),
         "type": [
             {
-                "coding": [
-                    _coding(
-                        "http://snomed.info/sct",
-                        "11429006",
-                        row.get("admission_type", "Inpatient"),
-                    )
-                ],
-                "text": row.get("admission_type", "Inpatient"),
+                "coding": [_coding("http://snomed.info/sct", snomed_code, snomed_display)],
+                "text": snomed_display,
             }
         ],
-        "subject": _ref(patient_uid),
+        "subject": _ref(patient_uid, f"Patient-{subject_id}"),
         "serviceProvider": _ref(org_uid, BIDMC_NAME),
         "period": {"start": _dt(row["admittime"])},
     }
@@ -451,12 +482,9 @@ def build_encounter_icu(row: dict, patient_uid: str, hosp_uid: str) -> dict:
         "location": [
             {"location": {"display": row["first_careunit"]}, "status": "completed"}
         ],
-        "extension": [
-            {
-                "url": "http://mimic.mit.edu/fhir/StructureDefinition/los",
-                "valueDecimal": round(float(row["los"]), 4) if row.get("los") else None,
-            }
-        ],
+        **({"extension": [{"url": "http://mimic.mit.edu/fhir/StructureDefinition/los",
+                            "valueDecimal": round(float(row["los"]), 4)}]}
+           if row.get("los") else {}),
     }
 
 
@@ -797,6 +825,309 @@ def build_omr_observation(row: dict, patient_uid: str) -> dict:
     }
 
 
+# ── document reference (clinical notes) ──────────────────────────────────────
+
+_NOTE_TYPE_LOINC: dict[str, tuple[str, str]] = {
+    "DS":  ("18842-5", "Discharge summary"),
+    "AR":  ("18726-0", "Radiology studies (set)"),
+    "RR":  ("18726-0", "Radiology studies (set)"),
+    "ECG": ("11524-6", "EKG study"),
+    "ECH": ("34750-4", "Echocardiography study"),
+    "NUR": ("34119-2", "Nursing facility initial assessment note"),
+    "PH":  ("47049-6", "Pharmacy note"),
+}
+
+def build_document_reference(row: dict, patient_uid: str, enc_uid: str | None) -> dict:
+    import base64
+    note_type = (row.get("note_type") or "").upper()
+    loinc_code, loinc_display = _NOTE_TYPE_LOINC.get(note_type, ("34109-3", "Note"))
+    uid = _uuid("docref", row["note_id"])
+    text_bytes = (row.get("text") or "").encode("utf-8")
+    doc: dict = {
+        "resourceType": "DocumentReference",
+        "id": uid,
+        "status": "current",
+        "type": {
+            "coding": [_coding("http://loinc.org", loinc_code, loinc_display)],
+            "text": loinc_display,
+        },
+        "category": [
+            {
+                "coding": [
+                    _coding(
+                        "http://hl7.org/fhir/us/core/CodeSystem/us-core-documentreference-category",
+                        "clinical-note",
+                        "Clinical Note",
+                    )
+                ]
+            }
+        ],
+        "subject": _ref(patient_uid),
+        "content": [
+            {
+                "attachment": {
+                    "contentType": "text/plain",
+                    "data": base64.b64encode(text_bytes).decode("ascii"),
+                }
+            }
+        ],
+    }
+    if row.get("charttime"):
+        doc["date"] = _dt(row["charttime"])
+    if enc_uid:
+        doc["context"] = {"encounter": [_ref(enc_uid)]}
+    return doc
+
+
+# ── claim / explanation-of-benefit builders ──────────────────────────────────
+
+
+def build_claim(
+    adm: dict,
+    patient_uid: str,
+    org_uid: str,
+    enc_uid: str,
+    condition_uids: list[str],
+    drg_rows: list[dict],
+) -> dict:
+    uid = _uuid("claim", adm["hadm_id"])
+    insurance = adm.get("insurance") or "Unknown"
+    adm_type_key = (adm.get("admission_type") or "").upper()
+    cls_code, _ = _ADMISSION_CLASS.get(adm_type_key, ("IMP", ""))
+    snomed_code, snomed_display = _ENCOUNTER_SNOMED[cls_code]
+
+    diagnosis_entries = [
+        {"sequence": i + 1, "diagnosisReference": {"reference": _urn(cuid)}}
+        for i, cuid in enumerate(condition_uids)
+    ]
+
+    items: list[dict] = [
+        {
+            "sequence": 1,
+            "productOrService": {
+                "coding": [_coding("http://snomed.info/sct", snomed_code, snomed_display)],
+                "text": snomed_display,
+            },
+            "encounter": [{"reference": _urn(enc_uid)}],
+        }
+    ]
+    for j, drg in enumerate(drg_rows, 2):
+        item: dict = {
+            "sequence": j,
+            "productOrService": {
+                "coding": [
+                    _coding(
+                        "http://terminology.hl7.org/CodeSystem/ex-diagnosistype",
+                        str(drg.get("drg_code") or "DRG"),
+                        drg.get("description"),
+                    )
+                ],
+                "text": drg.get("description") or str(drg.get("drg_code") or "DRG"),
+            },
+        }
+        if diagnosis_entries and (j - 1) <= len(diagnosis_entries):
+            item["diagnosisSequence"] = [j - 1]
+        items.append(item)
+
+    claim: dict = {
+        "resourceType": "Claim",
+        "id": uid,
+        "status": "active",
+        "type": {
+            "coding": [
+                _coding("http://terminology.hl7.org/CodeSystem/claim-type", "institutional")
+            ]
+        },
+        "use": "claim",
+        "patient": {"reference": _urn(patient_uid)},
+        "billablePeriod": {
+            "start": _dt(adm["admittime"]),
+            **({"end": _dt(adm["dischtime"])} if adm.get("dischtime") else {}),
+        },
+        "created": _dt(adm.get("dischtime") or adm["admittime"]),
+        "provider": _ref(org_uid, BIDMC_NAME),
+        "priority": {
+            "coding": [
+                _coding("http://terminology.hl7.org/CodeSystem/processpriority", "normal")
+            ]
+        },
+        "insurance": [
+            {"sequence": 1, "focal": True, "coverage": {"display": insurance}}
+        ],
+        "item": items,
+        "total": {"value": 0.0, "currency": "USD"},
+    }
+    if diagnosis_entries:
+        claim["diagnosis"] = diagnosis_entries
+    return claim
+
+
+def build_eob(
+    adm: dict,
+    patient_uid: str,
+    org_uid: str,
+    provider_uid: str | None,
+    claim_uid: str,
+    enc_uid: str,
+    condition_uids: list[str],
+) -> dict:
+    uid = _uuid("eob", adm["hadm_id"])
+    insurance = adm.get("insurance") or "Unknown"
+    adm_type_key = (adm.get("admission_type") or "").upper()
+    cls_code, _ = _ADMISSION_CLASS.get(adm_type_key, ("IMP", ""))
+    snomed_code, snomed_display = _ENCOUNTER_SNOMED[cls_code]
+    place_code, place_display = _SERVICE_PLACE[cls_code]
+    referral_ref = _urn(provider_uid) if provider_uid else _urn(org_uid)
+
+    contained = [
+        {
+            "resourceType": "ServiceRequest",
+            "id": "referral",
+            "status": "completed",
+            "intent": "order",
+            "subject": {"reference": _urn(patient_uid)},
+            "requester": {"reference": referral_ref},
+            "performer": [{"reference": referral_ref}],
+        },
+        {
+            "resourceType": "Coverage",
+            "id": "coverage",
+            "status": "active",
+            "type": {"text": insurance},
+            "beneficiary": {"reference": _urn(patient_uid)},
+            "payor": [{"display": insurance}],
+        },
+    ]
+
+    diagnosis_entries = [
+        {
+            "sequence": i + 1,
+            "diagnosisReference": {"reference": _urn(cuid)},
+            "type": [
+                {
+                    "coding": [
+                        _coding(
+                            "http://terminology.hl7.org/CodeSystem/ex-diagnosistype",
+                            "principal" if i == 0 else "discharge",
+                        )
+                    ]
+                }
+            ],
+        }
+        for i, cuid in enumerate(condition_uids)
+    ]
+
+    care_team: list[dict] = []
+    if provider_uid:
+        care_team = [
+            {
+                "sequence": 1,
+                "provider": {"reference": _urn(provider_uid)},
+                "role": {
+                    "coding": [
+                        _coding(
+                            "http://terminology.hl7.org/CodeSystem/claimcareteamrole",
+                            "primary",
+                            "Primary Care Practitioner",
+                        )
+                    ]
+                },
+            }
+        ]
+
+    eob: dict = {
+        "resourceType": "ExplanationOfBenefit",
+        "id": uid,
+        "contained": contained,
+        "identifier": [
+            {
+                "system": "https://bluebutton.cms.gov/resources/variables/clm_id",
+                "value": claim_uid,
+            },
+            {
+                "system": "https://bluebutton.cms.gov/resources/identifier/claim-group",
+                "value": "99999999999",
+            },
+        ],
+        "status": "active",
+        "type": {
+            "coding": [
+                _coding("http://terminology.hl7.org/CodeSystem/claim-type", "institutional")
+            ]
+        },
+        "use": "claim",
+        "patient": {"reference": _urn(patient_uid)},
+        "billablePeriod": {
+            "start": _dt(adm.get("dischtime") or adm["admittime"]),
+        },
+        "created": _dt(adm.get("dischtime") or adm["admittime"]),
+        "insurer": {"display": insurance},
+        "provider": _ref(provider_uid or org_uid),
+        "referral": {"reference": "#referral"},
+        "claim": {"reference": _urn(claim_uid)},
+        "outcome": "complete",
+        "insurance": [
+            {
+                "focal": True,
+                "coverage": {"reference": "#coverage", "display": insurance},
+            }
+        ],
+        "item": [
+            {
+                "sequence": 1,
+                "category": {
+                    "coding": [
+                        _coding(
+                            "https://bluebutton.cms.gov/resources/variables/line_cms_type_srvc_cd",
+                            "1",
+                            "Medical care",
+                        )
+                    ]
+                },
+                "productOrService": {
+                    "coding": [_coding("http://snomed.info/sct", snomed_code, snomed_display)],
+                    "text": snomed_display,
+                },
+                "servicedPeriod": {
+                    "start": _dt(adm["admittime"]),
+                    **({"end": _dt(adm["dischtime"])} if adm.get("dischtime") else {}),
+                },
+                "locationCodeableConcept": {
+                    "coding": [
+                        _coding(
+                            "http://terminology.hl7.org/CodeSystem/ex-serviceplace",
+                            place_code,
+                            place_display,
+                        )
+                    ]
+                },
+                "encounter": [{"reference": _urn(enc_uid)}],
+            }
+        ],
+        "total": [
+            {
+                "category": {
+                    "coding": [
+                        _coding(
+                            "http://terminology.hl7.org/CodeSystem/adjudication",
+                            "submitted",
+                            "Submitted Amount",
+                        )
+                    ],
+                    "text": "Submitted Amount",
+                },
+                "amount": {"value": 0.0, "currency": "USD"},
+            }
+        ],
+        "payment": {"amount": {"value": 0.0, "currency": "USD"}},
+    }
+    if care_team:
+        eob["careTeam"] = care_team
+    if diagnosis_entries:
+        eob["diagnosis"] = diagnosis_entries
+    return eob
+
+
 # ── bundle builder ────────────────────────────────────────────────────────────
 
 
@@ -825,14 +1156,16 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
     # Patient
     cur.execute("SELECT * FROM hosp.patients WHERE subject_id = %s", (subject_id,))
     pat_row = cur.fetchone()
+    if pat_row is None:
+        return 0
 
     cur.execute(
-        "SELECT * FROM hosp.admissions WHERE subject_id = %s ORDER BY admittime LIMIT 1",
+        "SELECT * FROM hosp.admissions WHERE subject_id = %s ORDER BY admittime DESC LIMIT 1",
         (subject_id,),
     )
-    first_admission = cur.fetchone()
+    latest_admission = cur.fetchone()
 
-    add(build_patient(pat_row, first_admission))
+    add(build_patient(pat_row, latest_admission))
 
     # Practitioners — collect all distinct provider IDs for this patient
     cur.execute(
@@ -881,7 +1214,7 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         icu_enc_uids[icu["stay_id"]] = enc["id"]
         add(enc)
 
-    # Conditions
+    # Conditions — tracked per admission for Claim building
     cur.execute(
         """
         SELECT d.*, i.long_title, a.admittime
@@ -893,10 +1226,33 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         """,
         (subject_id,),
     )
+    conditions_per_hadm: dict[int, list[str]] = defaultdict(list)
     for row in cur.fetchall():
         enc_uid = hosp_enc_uids.get(row["hadm_id"])
         if enc_uid:
-            add(build_condition(row, patient_uid, enc_uid))
+            cond = build_condition(row, patient_uid, enc_uid)
+            conditions_per_hadm[row["hadm_id"]].append(cond["id"])
+            add(cond)
+
+    # DRG codes per admission for Claim line items
+    cur.execute(
+        "SELECT * FROM hosp.drgcodes WHERE subject_id = %s ORDER BY hadm_id",
+        (subject_id,),
+    )
+    drg_per_hadm: dict[int, list] = defaultdict(list)
+    for row in cur.fetchall():
+        drg_per_hadm[row["hadm_id"]].append(row)
+
+    # Claims + ExplanationOfBenefits — one per hospital encounter
+    for adm in admissions:
+        hadm_id = adm["hadm_id"]
+        enc_uid = hosp_enc_uids[hadm_id]
+        cond_uids = list(conditions_per_hadm.get(hadm_id, []))
+        drg_rows = list(drg_per_hadm.get(hadm_id, []))
+        p_uid = provider_uids.get(adm.get("admit_provider_id") or "")
+        claim = build_claim(adm, patient_uid, BIDMC_UUID, enc_uid, cond_uids, drg_rows)
+        add(claim)
+        add(build_eob(adm, patient_uid, BIDMC_UUID, p_uid, claim["id"], enc_uid, cond_uids))
 
     # Procedures
     cur.execute(
@@ -914,13 +1270,15 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         if enc_uid:
             add(build_procedure(row, patient_uid, enc_uid))
 
-    # Lab observations
+    # Lab observations — capped per patient to limit bundle size on full dataset
     cur.execute(
         """
         SELECT l.*, d.label
         FROM hosp.labevents l
         LEFT JOIN hosp.d_labitems d ON l.itemid = d.itemid
         WHERE l.subject_id = %s
+        ORDER BY l.charttime DESC NULLS LAST
+        LIMIT 500
         """,
         (subject_id,),
     )
@@ -982,6 +1340,34 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         for resource in build_diagnostic_report(group_list, patient_uid, enc_uid):
             add(resource)
 
+    # Discharge summaries (MIMIC-IV-Note) — most recent 20 per patient
+    cur.execute(
+        """
+        SELECT * FROM note.discharge
+        WHERE subject_id = %s
+        ORDER BY charttime DESC NULLS LAST
+        LIMIT 20
+        """,
+        (subject_id,),
+    )
+    for row in cur.fetchall():
+        enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
+        add(build_document_reference(row, patient_uid, enc_uid))
+
+    # Radiology notes (MIMIC-IV-Note) — most recent 20 per patient
+    cur.execute(
+        """
+        SELECT * FROM note.radiology
+        WHERE subject_id = %s
+        ORDER BY charttime DESC NULLS LAST
+        LIMIT 20
+        """,
+        (subject_id,),
+    )
+    for row in cur.fetchall():
+        enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
+        add(build_document_reference(row, patient_uid, enc_uid))
+
     bundle = build_bundle(entries)
     out_path = output_dir / f"{subject_id}.json"
     out_path.write_text(json.dumps(bundle, default=str, indent=2), encoding="utf-8")
@@ -991,27 +1377,46 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
 # ── main ──────────────────────────────────────────────────────────────────────
 
 
-def convert(dsn: str = DSN, output_dir: Path = OUTPUT_DIR):
+def convert(
+    dsn: str = DSN,
+    output_dir: Path = OUTPUT_DIR,
+    limit: int | None = None,
+    offset: int = 0,
+    subject_ids: list[int] | None = None,
+    random_sample: bool = True,
+):
     output_dir.mkdir(parents=True, exist_ok=True)
     conn = psycopg2.connect(dsn)
     conn.set_session(readonly=True, autocommit=True)
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    cur.execute("SELECT subject_id FROM hosp.patients ORDER BY subject_id")
-    subject_ids = [r["subject_id"] for r in cur.fetchall()]
+    if subject_ids is not None:
+        sids = subject_ids
+    else:
+        effective_limit = limit if limit is not None else (20 if random_sample else None)
+        if random_sample:
+            query = "SELECT subject_id FROM hosp.patients ORDER BY RANDOM()"
+        else:
+            query = "SELECT subject_id FROM hosp.patients ORDER BY subject_id"
+            if offset:
+                query += f" OFFSET {offset}"
+        if effective_limit:
+            query += f" LIMIT {effective_limit}"
+        cur.execute(query)
+        sids = [r["subject_id"] for r in cur.fetchall()]
 
-    print(f"Converting {len(subject_ids)} patients → {output_dir.resolve()}/\n")
+    total = len(sids)
+    width = len(str(total))
+    print(f"Converting {total:,} patients → {output_dir.resolve()}/\n")
     total_entries = 0
-    for i, sid in enumerate(subject_ids, 1):
+    for i, sid in enumerate(sids, 1):
         n = convert_patient(cur, sid, output_dir)
         total_entries += n
-        print(
-            f"  [{i:3d}/{len(subject_ids)}] subject {sid:>10}  {n:4d} entries  →  {sid}.json"
-        )
+        print(f"  [{i:{width}d}/{total}] subject {sid:>10}  {n:5d} entries  →  {sid}.json")
 
     cur.close()
     conn.close()
-    print(f"\nDone. {len(subject_ids)} bundles, {total_entries:,} total entries.")
+    print(f"\nDone. {total:,} bundles, {total_entries:,} total entries.")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Load MIMIC-IV demo CSVs into PostgreSQL."""
+"""Load MIMIC-IV CSVs into PostgreSQL.
+
+Environment variables:
+  MIMIC_DSN       PostgreSQL connection string (default: localhost:5433)
+  MIMIC_DATA_DIR  Root directory containing hosp/ and icu/ subdirectories
+                  (default: project root — works for demo dataset in-tree)
+  MIMIC_NOTE_DIR  Directory containing note/ subdirectory with discharge/radiology CSVs
+                  (default: <MIMIC_DATA_DIR>/note — skip notes if missing)
+"""
 
 import gzip
 import io
@@ -12,46 +20,54 @@ import psycopg2
 
 DSN = os.getenv("MIMIC_DSN", "host=localhost port=5433 dbname=mimiciv user=mimic password=mimic")
 
-BASE = Path(__file__).parent.parent
+# Default data dir: dataset/ inside the project root
+_PROJECT_ROOT = Path(__file__).parent.parent
+_DEFAULT_DATA_DIR = _PROJECT_ROOT / "dataset"
+
+DATA_DIR = Path(os.getenv("MIMIC_DATA_DIR", str(_DEFAULT_DATA_DIR)))
+NOTE_DIR = Path(os.getenv("MIMIC_NOTE_DIR", str(DATA_DIR / "note")))
 
 TABLES = [
     # (schema, table, csv_path)
-    # hosp — dictionaries first (no FK deps, but good practice)
-    ("hosp", "provider",           BASE / "hosp/provider.csv.gz"),
-    ("hosp", "d_icd_diagnoses",    BASE / "hosp/d_icd_diagnoses.csv.gz"),
-    ("hosp", "d_icd_procedures",   BASE / "hosp/d_icd_procedures.csv.gz"),
-    ("hosp", "d_hcpcs",            BASE / "hosp/d_hcpcs.csv.gz"),
-    ("hosp", "d_labitems",         BASE / "hosp/d_labitems.csv.gz"),
+    # hosp — dictionaries first (no FK deps)
+    ("hosp", "d_icd_diagnoses",    DATA_DIR / "hosp/d_icd_diagnoses.csv.gz"),
+    ("hosp", "d_icd_procedures",   DATA_DIR / "hosp/d_icd_procedures.csv.gz"),
+    ("hosp", "d_hcpcs",            DATA_DIR / "hosp/d_hcpcs.csv.gz"),
+    ("hosp", "d_labitems",         DATA_DIR / "hosp/d_labitems.csv.gz"),
+    ("hosp", "provider",           DATA_DIR / "hosp/provider.csv.gz"),
     # hosp — core
-    ("hosp", "patients",           BASE / "hosp/patients.csv.gz"),
-    ("hosp", "admissions",         BASE / "hosp/admissions.csv.gz"),
-    ("hosp", "transfers",          BASE / "hosp/transfers.csv.gz"),
-    ("hosp", "services",           BASE / "hosp/services.csv.gz"),
+    ("hosp", "patients",           DATA_DIR / "hosp/patients.csv.gz"),
+    ("hosp", "admissions",         DATA_DIR / "hosp/admissions.csv.gz"),
+    ("hosp", "transfers",          DATA_DIR / "hosp/transfers.csv.gz"),
+    ("hosp", "services",           DATA_DIR / "hosp/services.csv.gz"),
     # hosp — clinical
-    ("hosp", "diagnoses_icd",      BASE / "hosp/diagnoses_icd.csv.gz"),
-    ("hosp", "procedures_icd",     BASE / "hosp/procedures_icd.csv.gz"),
-    ("hosp", "drgcodes",           BASE / "hosp/drgcodes.csv.gz"),
-    ("hosp", "hcpcsevents",        BASE / "hosp/hcpcsevents.csv.gz"),
-    ("hosp", "labevents",          BASE / "hosp/labevents.csv.gz"),
-    ("hosp", "microbiologyevents", BASE / "hosp/microbiologyevents.csv.gz"),
-    ("hosp", "omr",                BASE / "hosp/omr.csv.gz"),
+    ("hosp", "diagnoses_icd",      DATA_DIR / "hosp/diagnoses_icd.csv.gz"),
+    ("hosp", "procedures_icd",     DATA_DIR / "hosp/procedures_icd.csv.gz"),
+    ("hosp", "drgcodes",           DATA_DIR / "hosp/drgcodes.csv.gz"),
+    ("hosp", "hcpcsevents",        DATA_DIR / "hosp/hcpcsevents.csv.gz"),
+    ("hosp", "labevents",          DATA_DIR / "hosp/labevents.csv.gz"),
+    ("hosp", "microbiologyevents", DATA_DIR / "hosp/microbiologyevents.csv.gz"),
+    ("hosp", "omr",                DATA_DIR / "hosp/omr.csv.gz"),
     # hosp — medications
-    ("hosp", "poe",                BASE / "hosp/poe.csv.gz"),
-    ("hosp", "poe_detail",         BASE / "hosp/poe_detail.csv.gz"),
-    ("hosp", "prescriptions",      BASE / "hosp/prescriptions.csv.gz"),
-    ("hosp", "pharmacy",           BASE / "hosp/pharmacy.csv.gz"),
-    ("hosp", "emar",               BASE / "hosp/emar.csv.gz"),
-    ("hosp", "emar_detail",        BASE / "hosp/emar_detail.csv.gz"),
-    # icu
-    ("icu",  "caregiver",          BASE / "icu/caregiver.csv.gz"),
-    ("icu",  "d_items",            BASE / "icu/d_items.csv.gz"),
-    ("icu",  "icustays",           BASE / "icu/icustays.csv.gz"),
-    ("icu",  "chartevents",        BASE / "icu/chartevents.csv.gz"),
-    ("icu",  "datetimeevents",     BASE / "icu/datetimeevents.csv.gz"),
-    ("icu",  "outputevents",       BASE / "icu/outputevents.csv.gz"),
-    ("icu",  "inputevents",        BASE / "icu/inputevents.csv.gz"),
-    ("icu",  "ingredientevents",   BASE / "icu/ingredientevents.csv.gz"),
-    ("icu",  "procedureevents",    BASE / "icu/procedureevents.csv.gz"),
+    ("hosp", "poe",                DATA_DIR / "hosp/poe.csv.gz"),
+    ("hosp", "poe_detail",         DATA_DIR / "hosp/poe_detail.csv.gz"),
+    ("hosp", "prescriptions",      DATA_DIR / "hosp/prescriptions.csv.gz"),
+    ("hosp", "pharmacy",           DATA_DIR / "hosp/pharmacy.csv.gz"),
+    ("hosp", "emar",               DATA_DIR / "hosp/emar.csv.gz"),
+    ("hosp", "emar_detail",        DATA_DIR / "hosp/emar_detail.csv.gz"),
+    # icu (absent in MIMIC-IV v3.1 full download — skipped if missing)
+    ("icu",  "caregiver",          DATA_DIR / "icu/caregiver.csv.gz"),
+    ("icu",  "d_items",            DATA_DIR / "icu/d_items.csv.gz"),
+    ("icu",  "icustays",           DATA_DIR / "icu/icustays.csv.gz"),
+    ("icu",  "chartevents",        DATA_DIR / "icu/chartevents.csv.gz"),
+    ("icu",  "datetimeevents",     DATA_DIR / "icu/datetimeevents.csv.gz"),
+    ("icu",  "outputevents",       DATA_DIR / "icu/outputevents.csv.gz"),
+    ("icu",  "inputevents",        DATA_DIR / "icu/inputevents.csv.gz"),
+    ("icu",  "ingredientevents",   DATA_DIR / "icu/ingredientevents.csv.gz"),
+    ("icu",  "procedureevents",    DATA_DIR / "icu/procedureevents.csv.gz"),
+    # note (MIMIC-IV-Note v2.2 — skipped if MIMIC_NOTE_DIR not set or missing)
+    ("note", "discharge",          NOTE_DIR / "discharge.csv.gz"),
+    ("note", "radiology",          NOTE_DIR / "radiology.csv.gz"),
 ]
 
 
@@ -68,47 +84,100 @@ def wait_for_db(dsn: str, retries: int = 20, delay: float = 3.0) -> psycopg2.ext
     sys.exit(1)
 
 
+class _StreamWithHeader:
+    """File-like wrapper that prepends a replacement header then streams the rest."""
+
+    def __init__(self, header: str, body):
+        self._prefix = io.StringIO(header)
+        self._body = body
+        self._prefix_done = False
+
+    def read(self, size=-1):
+        if self._prefix_done:
+            return self._body.read(size)
+        chunk = self._prefix.read(size)
+        if size == -1 or len(chunk) < size:
+            self._prefix_done = True
+            remaining = (-1) if size == -1 else (size - len(chunk))
+            chunk += self._body.read(remaining)
+        return chunk
+
+
 def load_table(cur, schema: str, table: str, csv_path: Path) -> int:
     with gzip.open(csv_path, "rt", encoding="utf-8") as f:
-        header = f.readline().strip()
-        columns = header.lower()  # postgres is case-insensitive but keep it clean
-        buf = io.StringIO()
-        buf.write(columns + "\n")
-        buf.write(f.read())
-        buf.seek(0)
-
-    cur.copy_expert(
-        f"COPY {schema}.{table} ({columns}) FROM STDIN WITH (FORMAT CSV, HEADER TRUE, NULL '')",
-        buf,
-    )
+        columns = f.readline().strip().lower()
+        stream = _StreamWithHeader(columns + "\n", f)
+        cur.copy_expert(
+            f"COPY {schema}.{table} ({columns}) FROM STDIN WITH (FORMAT CSV, HEADER TRUE, NULL '')",
+            stream,
+        )
     return cur.rowcount
 
 
-def main():
-    conn = wait_for_db(DSN)
+def main(
+    data_dir: Path | None = None,
+    note_dir: Path | None = None,
+    dsn: str | None = None,
+    only_tables: list[str] | None = None,
+):
+    effective_dsn = dsn or DSN
+
+    tables = TABLES
+    if data_dir is not None or note_dir is not None:
+        _data = data_dir or DATA_DIR
+        _note = note_dir or (_data / "note")
+        tables = [
+            (s, t, _data / p.relative_to(DATA_DIR) if s != "note" else _note / p.relative_to(NOTE_DIR))
+            for s, t, p in TABLES
+        ]
+
+    # Filter to specific tables when --tables is given
+    if only_tables:
+        tables = [(s, t, p) for s, t, p in tables if t in only_tables]
+        if not tables:
+            print(f"No matching tables found for: {only_tables}")
+            return
+
+    conn = wait_for_db(effective_dsn)
     conn.autocommit = False
 
     total = 0
     with conn:
         cur = conn.cursor()
 
-        # Truncate in reverse order to avoid FK issues, then reload cleanly.
-        print("Truncating existing data...")
-        for schema, table, _ in reversed(TABLES):
-            cur.execute(f"TRUNCATE TABLE {schema}.{table} CASCADE")
+        print("Truncating selected table(s)..." if only_tables else "Truncating existing data...")
+        for schema, table, _ in reversed(tables):
+            cur.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema=%s AND table_name=%s",
+                (schema, table),
+            )
+            if cur.fetchone():
+                cur.execute(f"TRUNCATE TABLE {schema}.{table} CASCADE")
         conn.commit()
 
-        for schema, table, path in TABLES:
+        errors: list[str] = []
+        for schema, table, path in tables:
             if not path.exists():
                 print(f"  SKIP  {schema}.{table} — file not found: {path}")
                 continue
             print(f"  Loading {schema}.{table} ...", end=" ", flush=True)
-            rows = load_table(cur, schema, table, path)
-            print(f"{rows} rows")
-            total += rows
-        conn.commit()
+            try:
+                rows = load_table(cur, schema, table, path)
+                conn.commit()
+                print(f"{rows:,} rows")
+                total += rows
+            except Exception as exc:
+                conn.rollback()
+                msg = str(exc).splitlines()[0]
+                print(f"ERROR — {msg}")
+                errors.append(f"{schema}.{table}: {msg}")
 
-    print(f"\nDone. {total} total rows loaded.")
+    print(f"\nDone. {total:,} total rows loaded.")
+    if errors:
+        print(f"\n{len(errors)} table(s) failed to load:")
+        for e in errors:
+            print(f"  ✗ {e}")
     conn.close()
 
 

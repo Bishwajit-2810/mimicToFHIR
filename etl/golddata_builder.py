@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Standalone FHIR R4 resource builders for the golddata pipeline.
+Standalone FHIR R4 resource builders for the golddata / testing pipelines.
 
 Completely independent from mimic_to_bundle.py:
   - Different UUID namespace prevents ID collisions with standard fhir bundles.
@@ -8,14 +8,20 @@ Completely independent from mimic_to_bundle.py:
   - Helpers are duplicated here intentionally so this module never imports from
     the existing pipeline and cannot break it.
 
-Golddata bundles blind the latest encounter: Condition (diagnoses) and
-MedicationRequest (treatments) are excluded; Observation (vitals, labs, OMR),
-DiagnosticReport, Procedure, and Encounter metadata are fully retained.
+EXCLUDED from all golddata/testing bundles (full blind on all encounters):
+  - Condition        (ALL ICD diagnoses)
+  - MedicationRequest (ALL prescriptions)
+
+INCLUDED always:
+  - Encounter, Observation (vitals/labs/OMR/ICU), Procedure, DiagnosticReport
+
+INCLUDED in testing variant only (include_notes=True in golddata_fhir_gen):
+  - DocumentReference (discharge summaries + radiology reports)
 
 Called exclusively by golddata_fhir_gen.py.
 """
 
-import re
+import base64
 import uuid
 from datetime import date, datetime
 from typing import Any
@@ -29,13 +35,11 @@ _NS = uuid.uuid5(_NS_SEED, "golddata-fhir-pipeline")
 BIDMC_UUID = str(uuid.uuid5(_NS, "golddata::org::BIDMC"))
 BIDMC_NAME = "Beth Israel Deaconess Medical Center"
 
-_RANGE_RE = re.compile(r"^(\d*\.?\d+)-(\d*\.?\d+)$")
-
 # Source tag applied to every resource meta
 _GOLDDATA_TAG = {
     "system": "http://mimic.mit.edu/fhir/tag/pipeline",
     "code": "golddata_fhir",
-    "display": "GoldData FHIR — diagnosis & treatment blind, latest encounter",
+    "display": "GoldData FHIR — all diagnoses & treatments excluded",
 }
 
 
@@ -67,22 +71,6 @@ def _quantity(value: Any, unit: str | None = None, system: str | None = None) ->
         q["system"] = system
     return q
 
-
-def _dose_and_rate(dose_value: Any, dose_unit: str | None) -> dict | None:
-    if dose_value is None or not dose_unit:
-        return None
-    if isinstance(dose_value, str):
-        stripped = dose_value.strip()
-        m = _RANGE_RE.match(stripped)
-        if m:
-            return {
-                "doseRange": {
-                    "low": _quantity(m.group(1), dose_unit, "http://unitsofmeasure.org"),
-                    "high": _quantity(m.group(2), dose_unit, "http://unitsofmeasure.org"),
-                }
-            }
-        dose_value = stripped
-    return {"doseQuantity": _quantity(dose_value, dose_unit, "http://unitsofmeasure.org")}
 
 
 def _urn(uid: str) -> str:
@@ -188,6 +176,30 @@ _MARITAL_MAP: dict[str, tuple[str, str]] = {
     "DIVORCED": ("D", "Divorced"),
     "WIDOWED": ("W", "Widowed"),
     "SEPARATED": ("L", "Legally Separated"),
+}
+
+_ADMISSION_CLASS: dict[str, tuple[str, str]] = {
+    "EMERGENCY":                   ("EMER", "emergency"),
+    "EU OBSERVATION":              ("EMER", "emergency"),
+    "DIRECT EMER.":                ("EMER", "emergency"),
+    "OBSERVATION ADMIT":           ("AMB",  "ambulatory"),
+    "AMBULATORY OBSERVATION":      ("AMB",  "ambulatory"),
+    "DIRECT OBSERVATION":          ("AMB",  "ambulatory"),
+    "SURGICAL SAME DAY ADMISSION": ("AMB",  "ambulatory"),
+    "ELECTIVE":                    ("IMP",  "inpatient encounter"),
+    "URGENT":                      ("IMP",  "inpatient encounter"),
+}
+
+_ENCOUNTER_SNOMED: dict[str, tuple[str, str]] = {
+    "EMER": ("50849002", "Emergency room admission"),
+    "AMB":  ("11429006", "Consultation"),
+    "IMP":  ("32485007", "Hospital admission"),
+}
+
+_SERVICE_PLACE: dict[str, tuple[str, str]] = {
+    "EMER": ("23", "Emergency Room – Hospital"),
+    "AMB":  ("22", "On Campus-Outpatient Hospital"),
+    "IMP":  ("21", "Inpatient Hospital"),
 }
 
 # LOINC codes for common ICU chart items
@@ -312,19 +324,19 @@ def build_patient(row: dict, admission: dict | None) -> dict:
             "valueString": row["anchor_year_group"],
         }
     )
-    # Mark which hadm_id is the "blinded" latest encounter so consumers know
-    if admission:
-        extensions.append(
-            {
-                "url": "http://mimic.mit.edu/fhir/StructureDefinition/golddata-latest-encounter",
-                "valueString": str(admission.get("hadm_id", "")),
-            }
-        )
 
     patient: dict = {
         "resourceType": "Patient",
         "id": uid,
         "meta": _meta(),
+        "text": {
+            "status": "generated",
+            "div": (
+                f'<div xmlns="http://www.w3.org/1999/xhtml">'
+                f"MIMIC-IV Patient {row['subject_id']}"
+                f"</div>"
+            ),
+        },
         "extension": extensions,
         "identifier": [
             {
@@ -351,6 +363,7 @@ def build_patient(row: dict, admission: dict | None) -> dict:
         ],
         "gender": gender_display,
         "birthDate": f"{birth_year}-07-01",
+        "multipleBirthBoolean": False,
     }
 
     if row.get("dod"):
@@ -390,9 +403,12 @@ def build_encounter_hosp(
     patient_uid: str,
     org_uid: str,
     provider_uid: str | None,
-    is_latest: bool = False,
 ) -> dict:
     uid = _uuid("encounter-hosp", row["hadm_id"])
+    adm_type_key = (row.get("admission_type") or "").upper()
+    cls_code, cls_display = _ADMISSION_CLASS.get(adm_type_key, ("IMP", "inpatient encounter"))
+    snomed_code, snomed_display = _ENCOUNTER_SNOMED[cls_code]
+    subject_id = row.get("subject_id", "")
     r: dict = {
         "resourceType": "Encounter",
         "id": uid,
@@ -400,22 +416,16 @@ def build_encounter_hosp(
         "status": "finished",
         "class": _coding(
             "http://terminology.hl7.org/CodeSystem/v3-ActCode",
-            "IMP",
-            "inpatient encounter",
+            cls_code,
+            cls_display,
         ),
         "type": [
             {
-                "coding": [
-                    _coding(
-                        "http://snomed.info/sct",
-                        "11429006",
-                        row.get("admission_type", "Inpatient"),
-                    )
-                ],
-                "text": row.get("admission_type", "Inpatient"),
+                "coding": [_coding("http://snomed.info/sct", snomed_code, snomed_display)],
+                "text": snomed_display,
             }
         ],
-        "subject": _ref(patient_uid),
+        "subject": _ref(patient_uid, f"Patient-{subject_id}"),
         "serviceProvider": _ref(org_uid, BIDMC_NAME),
         "period": {"start": _dt(row["admittime"])},
     }
@@ -427,43 +437,28 @@ def build_encounter_hosp(
     hosp: dict = {}
     if row.get("admission_location"):
         hosp["admitSource"] = {"text": row["admission_location"]}
-
-    # For the latest encounter we intentionally omit discharge disposition/diagnosis
-    # to prevent outcome leakage.
-    if not is_latest:
-        if row.get("hospital_expire_flag"):
-            hosp["dischargeDisposition"] = {
-                "coding": [
-                    _coding(
-                        "http://terminology.hl7.org/CodeSystem/discharge-disposition",
-                        "exp",
-                        "Expired",
-                    )
-                ]
-            }
-        elif row.get("discharge_location"):
-            hosp["dischargeDisposition"] = {"text": row["discharge_location"]}
-
+    if row.get("hospital_expire_flag"):
+        hosp["dischargeDisposition"] = {
+            "coding": [
+                _coding(
+                    "http://terminology.hl7.org/CodeSystem/discharge-disposition",
+                    "exp",
+                    "Expired",
+                )
+            ]
+        }
+    elif row.get("discharge_location"):
+        hosp["dischargeDisposition"] = {"text": row["discharge_location"]}
     if hosp:
         r["hospitalization"] = hosp
 
-    extensions: list[dict] = []
     if row.get("insurance"):
-        extensions.append(
+        r["extension"] = [
             {
                 "url": "http://mimic.mit.edu/fhir/StructureDefinition/insurance",
                 "valueString": row["insurance"],
             }
-        )
-    if is_latest:
-        extensions.append(
-            {
-                "url": "http://mimic.mit.edu/fhir/StructureDefinition/golddata-blinded",
-                "valueBoolean": True,
-            }
-        )
-    if extensions:
-        r["extension"] = extensions
+        ]
 
     return r
 
@@ -487,71 +482,13 @@ def build_encounter_icu(row: dict, patient_uid: str, hosp_uid: str) -> dict:
         "location": [
             {"location": {"display": row["first_careunit"]}, "status": "completed"}
         ],
-        "extension": [
-            {
-                "url": "http://mimic.mit.edu/fhir/StructureDefinition/los",
-                "valueDecimal": (
-                    round(float(row["los"]), 4) if row.get("los") else None
-                ),
-            }
-        ],
-    }
-
-
-def build_condition(row: dict, patient_uid: str, enc_uid: str) -> dict:
-    """Build a Condition for HISTORICAL encounters only. Never called for latest."""
-    uid = _uuid("condition", row["hadm_id"], row["seq_num"])
-    return {
-        "resourceType": "Condition",
-        "id": uid,
-        "meta": _meta(),
-        "clinicalStatus": {
-            "coding": [
-                _coding(
-                    "http://terminology.hl7.org/CodeSystem/condition-clinical", "active"
-                )
-            ]
-        },
-        "verificationStatus": {
-            "coding": [
-                _coding(
-                    "http://terminology.hl7.org/CodeSystem/condition-ver-status",
-                    "confirmed",
-                )
-            ]
-        },
-        "category": [
-            {
-                "coding": [
-                    _coding(
-                        "http://terminology.hl7.org/CodeSystem/condition-category",
-                        "encounter-diagnosis",
-                        "Encounter Diagnosis",
-                    )
-                ]
-            }
-        ],
-        "code": {
-            "coding": [
-                _coding(
-                    _icd_system(row["icd_version"]),
-                    row["icd_code"],
-                    row.get("long_title"),
-                )
-            ],
-            "text": row.get("long_title") or row["icd_code"],
-        },
-        "subject": _ref(patient_uid),
-        "encounter": _ref(enc_uid),
-        **(
-            {"onsetDateTime": _dt(row.get("admittime"))} if row.get("admittime") else {}
-        ),
-        **({"recordedDate": _dt(row.get("admittime"))} if row.get("admittime") else {}),
+        **({"extension": [{"url": "http://mimic.mit.edu/fhir/StructureDefinition/los",
+                            "valueDecimal": round(float(row["los"]), 4)}]}
+           if row.get("los") else {}),
     }
 
 
 def build_procedure(row: dict, patient_uid: str, enc_uid: str) -> dict:
-    """Procedures performed — included for all encounters including latest."""
     uid = _uuid("procedure", row["hadm_id"], row["seq_num"])
     return {
         "resourceType": "Procedure",
@@ -737,46 +674,6 @@ def build_icu_procedure_observation(row: dict, patient_uid: str, enc_uid: str) -
     }
 
 
-def build_medication_request(row: dict, patient_uid: str, enc_uid: str) -> dict:
-    uid = _uuid(
-        "rx",
-        row["subject_id"],
-        row["hadm_id"],
-        row.get("pharmacy_id") or row.get("poe_id") or row.get("starttime"),
-        row.get("drug") or "",
-    )
-    r: dict = {
-        "resourceType": "MedicationRequest",
-        "id": uid,
-        "meta": _meta(),
-        "status": "completed",
-        "intent": "order",
-        "medicationCodeableConcept": {"text": row["drug"]},
-        "subject": _ref(patient_uid),
-        "encounter": _ref(enc_uid),
-    }
-    if row.get("ndc"):
-        r["medicationCodeableConcept"]["coding"] = [
-            _coding("http://hl7.org/fhir/sid/ndc", row["ndc"], row["drug"])
-        ]
-    dosage: dict = {}
-    dose_and_rate = _dose_and_rate(row.get("dose_val_rx"), row.get("dose_unit_rx"))
-    if dose_and_rate:
-        dosage["doseAndRate"] = [dose_and_rate]
-    if row.get("route"):
-        dosage["route"] = {"text": row["route"]}
-    if dosage:
-        r["dosageInstruction"] = [dosage]
-    timing: dict = {}
-    if row.get("starttime"):
-        timing["start"] = _dt(row["starttime"])
-    if row.get("stoptime"):
-        timing["end"] = _dt(row["stoptime"])
-    if timing:
-        r["dispenseRequest"] = {"validityPeriod": timing}
-    return r
-
-
 def build_diagnostic_report(
     rows: list[dict], patient_uid: str, enc_uid: str | None
 ) -> list[dict]:
@@ -875,6 +772,276 @@ def build_omr_observation(row: dict, patient_uid: str) -> dict:
         "effectiveDateTime": _dt(row["chartdate"]),
         "valueString": str(row["result_value"]),
     }
+
+
+_NOTE_TYPE_LOINC: dict[str, tuple[str, str]] = {
+    "DS":  ("18842-5", "Discharge summary"),
+    "AR":  ("18726-0", "Radiology studies (set)"),
+    "RR":  ("18726-0", "Radiology studies (set)"),
+    "ECG": ("11524-6", "EKG study"),
+    "ECH": ("34750-4", "Echocardiography study"),
+    "NUR": ("34119-2", "Nursing facility initial assessment note"),
+    "PH":  ("47049-6", "Pharmacy note"),
+}
+
+
+def build_document_reference(row: dict, patient_uid: str, enc_uid: str | None) -> dict:
+    note_type = (row.get("note_type") or "").upper()
+    loinc_code, loinc_display = _NOTE_TYPE_LOINC.get(note_type, ("34109-3", "Note"))
+    uid = _uuid("docref", row["note_id"])
+    text_bytes = (row.get("text") or "").encode("utf-8")
+    doc: dict = {
+        "resourceType": "DocumentReference",
+        "id": uid,
+        "meta": _meta(),
+        "status": "current",
+        "type": {
+            "coding": [_coding("http://loinc.org", loinc_code, loinc_display)],
+            "text": loinc_display,
+        },
+        "category": [
+            {
+                "coding": [
+                    _coding(
+                        "http://hl7.org/fhir/us/core/CodeSystem/us-core-documentreference-category",
+                        "clinical-note",
+                        "Clinical Note",
+                    )
+                ]
+            }
+        ],
+        "subject": _ref(patient_uid),
+        "content": [
+            {
+                "attachment": {
+                    "contentType": "text/plain",
+                    "data": base64.b64encode(text_bytes).decode("ascii"),
+                }
+            }
+        ],
+    }
+    if row.get("charttime"):
+        doc["date"] = _dt(row["charttime"])
+    if enc_uid:
+        doc["context"] = {"encounter": [_ref(enc_uid)]}
+    return doc
+
+
+def build_claim(
+    adm: dict,
+    patient_uid: str,
+    org_uid: str,
+    enc_uid: str,
+    drg_rows: list[dict],
+) -> dict:
+    uid = _uuid("claim", adm["hadm_id"])
+    insurance = adm.get("insurance") or "Unknown"
+    adm_type_key = (adm.get("admission_type") or "").upper()
+    cls_code, _ = _ADMISSION_CLASS.get(adm_type_key, ("IMP", ""))
+    snomed_code, snomed_display = _ENCOUNTER_SNOMED[cls_code]
+
+    items: list[dict] = [
+        {
+            "sequence": 1,
+            "productOrService": {
+                "coding": [_coding("http://snomed.info/sct", snomed_code, snomed_display)],
+                "text": snomed_display,
+            },
+            "encounter": [{"reference": _urn(enc_uid)}],
+        }
+    ]
+    for j, drg in enumerate(drg_rows, 2):
+        items.append(
+            {
+                "sequence": j,
+                "productOrService": {
+                    "coding": [
+                        _coding(
+                            "http://terminology.hl7.org/CodeSystem/ex-diagnosistype",
+                            str(drg.get("drg_code") or "DRG"),
+                            drg.get("description"),
+                        )
+                    ],
+                    "text": drg.get("description") or str(drg.get("drg_code") or "DRG"),
+                },
+            }
+        )
+
+    return {
+        "resourceType": "Claim",
+        "id": uid,
+        "meta": _meta(),
+        "status": "active",
+        "type": {
+            "coding": [
+                _coding("http://terminology.hl7.org/CodeSystem/claim-type", "institutional")
+            ]
+        },
+        "use": "claim",
+        "patient": {"reference": _urn(patient_uid)},
+        "billablePeriod": {
+            "start": _dt(adm["admittime"]),
+            **({"end": _dt(adm["dischtime"])} if adm.get("dischtime") else {}),
+        },
+        "created": _dt(adm.get("dischtime") or adm["admittime"]),
+        "provider": _ref(org_uid, BIDMC_NAME),
+        "priority": {
+            "coding": [
+                _coding("http://terminology.hl7.org/CodeSystem/processpriority", "normal")
+            ]
+        },
+        "insurance": [
+            {"sequence": 1, "focal": True, "coverage": {"display": insurance}}
+        ],
+        "item": items,
+        "total": {"value": 0.0, "currency": "USD"},
+    }
+
+
+def build_eob(
+    adm: dict,
+    patient_uid: str,
+    org_uid: str,
+    provider_uid: str | None,
+    claim_uid: str,
+    enc_uid: str,
+) -> dict:
+    uid = _uuid("eob", adm["hadm_id"])
+    insurance = adm.get("insurance") or "Unknown"
+    adm_type_key = (adm.get("admission_type") or "").upper()
+    cls_code, _ = _ADMISSION_CLASS.get(adm_type_key, ("IMP", ""))
+    snomed_code, snomed_display = _ENCOUNTER_SNOMED[cls_code]
+    place_code, place_display = _SERVICE_PLACE[cls_code]
+    referral_ref = _urn(provider_uid) if provider_uid else _urn(org_uid)
+
+    contained = [
+        {
+            "resourceType": "ServiceRequest",
+            "id": "referral",
+            "status": "completed",
+            "intent": "order",
+            "subject": {"reference": _urn(patient_uid)},
+            "requester": {"reference": referral_ref},
+            "performer": [{"reference": referral_ref}],
+        },
+        {
+            "resourceType": "Coverage",
+            "id": "coverage",
+            "status": "active",
+            "type": {"text": insurance},
+            "beneficiary": {"reference": _urn(patient_uid)},
+            "payor": [{"display": insurance}],
+        },
+    ]
+
+    care_team: list[dict] = []
+    if provider_uid:
+        care_team = [
+            {
+                "sequence": 1,
+                "provider": {"reference": _urn(provider_uid)},
+                "role": {
+                    "coding": [
+                        _coding(
+                            "http://terminology.hl7.org/CodeSystem/claimcareteamrole",
+                            "primary",
+                            "Primary Care Practitioner",
+                        )
+                    ]
+                },
+            }
+        ]
+
+    eob: dict = {
+        "resourceType": "ExplanationOfBenefit",
+        "id": uid,
+        "meta": _meta(),
+        "contained": contained,
+        "identifier": [
+            {
+                "system": "https://bluebutton.cms.gov/resources/variables/clm_id",
+                "value": claim_uid,
+            },
+            {
+                "system": "https://bluebutton.cms.gov/resources/identifier/claim-group",
+                "value": "99999999999",
+            },
+        ],
+        "status": "active",
+        "type": {
+            "coding": [
+                _coding("http://terminology.hl7.org/CodeSystem/claim-type", "institutional")
+            ]
+        },
+        "use": "claim",
+        "patient": {"reference": _urn(patient_uid)},
+        "billablePeriod": {
+            "start": _dt(adm.get("dischtime") or adm["admittime"]),
+        },
+        "created": _dt(adm.get("dischtime") or adm["admittime"]),
+        "insurer": {"display": insurance},
+        "provider": _ref(provider_uid or org_uid),
+        "referral": {"reference": "#referral"},
+        "claim": {"reference": _urn(claim_uid)},
+        "outcome": "complete",
+        "insurance": [
+            {
+                "focal": True,
+                "coverage": {"reference": "#coverage", "display": insurance},
+            }
+        ],
+        "item": [
+            {
+                "sequence": 1,
+                "category": {
+                    "coding": [
+                        _coding(
+                            "https://bluebutton.cms.gov/resources/variables/line_cms_type_srvc_cd",
+                            "1",
+                            "Medical care",
+                        )
+                    ]
+                },
+                "productOrService": {
+                    "coding": [_coding("http://snomed.info/sct", snomed_code, snomed_display)],
+                    "text": snomed_display,
+                },
+                "servicedPeriod": {
+                    "start": _dt(adm["admittime"]),
+                    **({"end": _dt(adm["dischtime"])} if adm.get("dischtime") else {}),
+                },
+                "locationCodeableConcept": {
+                    "coding": [
+                        _coding(
+                            "http://terminology.hl7.org/CodeSystem/ex-serviceplace",
+                            place_code,
+                            place_display,
+                        )
+                    ]
+                },
+                "encounter": [{"reference": _urn(enc_uid)}],
+            }
+        ],
+        "total": [
+            {
+                "category": {
+                    "coding": [
+                        _coding(
+                            "http://terminology.hl7.org/CodeSystem/adjudication",
+                            "submitted",
+                            "Submitted Amount",
+                        )
+                    ],
+                    "text": "Submitted Amount",
+                },
+                "amount": {"value": 0.0, "currency": "USD"},
+            }
+        ],
+        "payment": {"amount": {"value": 0.0, "currency": "USD"}},
+    }
+    if care_team:
+        eob["careTeam"] = care_team
+    return eob
 
 
 def build_bundle(entries: list[dict], latest_hadm_id: int | None = None) -> dict:

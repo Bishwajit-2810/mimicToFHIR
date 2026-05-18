@@ -1099,3 +1099,155 @@ body {
 @media (max-width: 640px) {
   .empty-state-card { margin: 0 0.25rem; }
 }
+
+/* ── Clinical Notes tab ──────────────────────────────────────────────────── */
+.notes-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 0.5rem;
+  padding: 0.375rem 0.75rem;
+}
+
+.note-card {
+  border-bottom: 1px solid #21262d;
+}
+.note-card:last-child { border-bottom: none; }
+
+.note-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+.note-card-header:hover { background: rgba(255,255,255,0.02); }
+
+.note-date-chip {
+  font-size: 0.68rem;
+  color: #484f58;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid #30363d;
+  border-radius: 9999px;
+  padding: 0.1rem 0.5rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.note-body {
+  padding: 0 1rem 0.75rem 2.4rem;
+}
+
+.note-preview-text {
+  font-size: 0.78rem;
+  color: #8b949e;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0 0 0.5rem;
+}
+
+.note-full { margin-top: 0.5rem; }
+
+.note-full-text {
+  font-size: 0.76rem;
+  color: #8b949e;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', monospace;
+  background: #0d1117;
+  border: 1px solid #21262d;
+  border-radius: 0.4rem;
+  padding: 0.75rem 1rem;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.note-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.7rem;
+  color: #58a6ff;
+  background: rgba(88,166,255,0.07);
+  border: 1px solid rgba(88,166,255,0.2);
+  border-radius: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+  margin-top: 0.25rem;
+  transition: background 0.15s;
+}
+.note-expand-btn:hover { background: rgba(88,166,255,0.14); }
+
+/* ── Notes inside encounter cards ───────────────────────────────────────── */
+.enc-note-item {
+  border-bottom: 1px solid #21262d;
+}
+.enc-note-item:last-child { border-bottom: none; }
+
+.enc-note-item-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 0.35rem;
+  transition: background 0.15s;
+}
+.enc-note-item-header:hover { background: rgba(255,255,255,0.02); }
+
+.enc-note-item-body {
+  padding: 0 0.75rem 0.65rem 1.75rem;
+}
+
+/* ── Dataset banner ──────────────────────────────────────────────────────── */
+.dataset-banner {
+  background: rgba(13, 17, 23, 0.80);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  backdrop-filter: blur(12px);
+}
+
+.ds-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: color-mix(in srgb, var(--ds-color, #3b82f6) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ds-color, #3b82f6) 45%, transparent);
+  color: var(--ds-color, #3b82f6);
+  border-radius: 999px;
+  padding: 0.15rem 0.65rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ds-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+  font-size: 0.68rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ds-chip-on {
+  background: rgba(52,211,153,0.10);
+  border: 1px solid rgba(52,211,153,0.25);
+  color: #34d399;
+}
+.ds-chip-off {
+  background: rgba(107,114,128,0.08);
+  border: 1px solid rgba(107,114,128,0.20);
+  color: #4b5563;
+  text-decoration: line-through;
+  opacity: 0.7;
+}

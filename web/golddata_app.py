@@ -4,7 +4,7 @@ golddata_app.py — GoldData FHIR Dashboard
 Serves golddata_fhir_bundles/ on port 8096 using the same static/ UI as app.py.
 
   Port 8095  →  web.app          reads fhir_bundles/          (full clinical data)
-  Port 8096  →  web.golddata_app reads golddata_fhir_bundles/ (latest-encounter diagnoses excluded)
+  Port 8096  →  web.golddata_app reads golddata_fhir_bundles/ (all diagnoses & medications excluded)
 
 Start:
     uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
@@ -34,6 +34,23 @@ _STD_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
 _running: dict[str, dict] = {}
 
+_DATASET_INFO = {
+    "mode": "golddata",
+    "label": "Gold Data (Blind)",
+    "description": "Blind dataset — no diagnoses, no medications, no clinical notes",
+    "includes": {
+        "conditions": False,
+        "medications": False,
+        "notes": False,
+        "vitals": True,
+        "labs": True,
+        "procedures": True,
+        "encounters": True,
+    },
+    "color": "#f59e0b",
+    "icon": "fa-eye-slash",
+}
+
 
 def _blinded_hadm(bundle: dict) -> int | None:
     for ext in bundle.get("meta", {}).get("extension", []):
@@ -42,22 +59,18 @@ def _blinded_hadm(bundle: dict) -> int | None:
     return None
 
 
-def _excluded_conditions(std_bundle: dict, blinded_hadm: int | None) -> list[dict]:
-    if blinded_hadm is None:
-        return []
-    enc_uid = str(uuid.uuid5(_STD_NS, f"mimic-iv::encounter-hosp::{blinded_hadm}"))
-    enc_ref = f"urn:uuid:{enc_uid}"
+def _excluded_conditions(std_bundle: dict) -> list[dict]:
+    """Return ALL conditions from the standard bundle (gold excludes all, not just latest)."""
     excluded = []
     for entry in std_bundle.get("entry", []):
         r = entry.get("resource", {})
         if r.get("resourceType") != "Condition":
             continue
-        if r.get("encounter", {}).get("reference", "") == enc_ref:
-            code_obj = r.get("code", {})
-            icd = next((cd.get("code", "") for cd in code_obj.get("coding", [])), "")
-            sys_raw = next((cd.get("system", "") for cd in code_obj.get("coding", [])), "")
-            icd_sys = "ICD-10" if "icd-10" in sys_raw else ("ICD-9" if "icd-9" in sys_raw else "")
-            excluded.append({"name": concept_text(code_obj), "code": icd, "codeSystem": icd_sys})
+        code_obj = r.get("code", {})
+        icd = next((cd.get("code", "") for cd in code_obj.get("coding", [])), "")
+        sys_raw = next((cd.get("system", "") for cd in code_obj.get("coding", [])), "")
+        icd_sys = "ICD-10" if "icd-10" in sys_raw else ("ICD-9" if "icd-9" in sys_raw else "")
+        excluded.append({"name": concept_text(code_obj), "code": icd, "codeSystem": icd_sys})
     return excluded
 
 
@@ -89,16 +102,22 @@ def _pipeline_status(name: str) -> dict:
             "started": info["started"], "log": info.get("log", [])}
 
 
-def _run_pipeline(name: str, script: str) -> dict:
+def _run_pipeline(name: str, cmd: list[str]) -> dict:
     existing = _running.get(name)
     if existing and existing["proc"].poll() is None:
         return {"started": False, "reason": f"{name} pipeline already running"}
     proc = subprocess.Popen(
-        [sys.executable, script],
+        cmd,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )
     _running[name] = {"proc": proc, "started": datetime.utcnow().isoformat(), "log": []}
     return {"started": True, "pid": proc.pid}
+
+
+@app.get("/api/info")
+def api_info():
+    count = len(list(BUNDLES_DIR.glob("*.json"))) if BUNDLES_DIR.exists() else 0
+    return {**_DATASET_INFO, "bundleCount": count}
 
 
 @app.get("/api/patients")
@@ -123,7 +142,7 @@ def get_patient(patient_id: str):
     }
     try:
         std = _read_std_bundle(patient_id)
-        result["golddata"]["excludedConditions"] = _excluded_conditions(std, hadm)
+        result["golddata"]["excludedConditions"] = _excluded_conditions(std)
     except Exception:
         result["golddata"]["excludedConditions"] = []
 
@@ -146,19 +165,17 @@ def api_status():
 
 @app.post("/api/run/standard")
 def run_standard():
-    result = _run_pipeline("standard", "main.py")
+    result = _run_pipeline("standard", [sys.executable, "main.py", "bundle"])
     if not result["started"]:
         raise HTTPException(status_code=409, detail=result["reason"])
-    _read_std_bundle.cache_clear()
     return result
 
 
 @app.post("/api/run/golddata")
 def run_golddata():
-    result = _run_pipeline("golddata", "etl/golddata_fhir_gen.py")
+    result = _run_pipeline("golddata", [sys.executable, "-m", "etl.golddata_fhir_gen"])
     if not result["started"]:
         raise HTTPException(status_code=409, detail=result["reason"])
-    _read_bundle.cache_clear()
     return result
 
 

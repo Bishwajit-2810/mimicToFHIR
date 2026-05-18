@@ -1,74 +1,53 @@
-# MIMIC-IV Clinical Database Demo v2.2
+# MIMIC-IV Clinical Database Platform
 
-A full-stack clinical data platform built on the
-[MIMIC-IV demo dataset](https://physionet.org/content/mimic-iv-demo/2.2/).
-It loads de-identified patient records into PostgreSQL, converts them to FHIR R4,
-and serves them through two independent web dashboards.
+A full-stack clinical data platform built on
+[MIMIC-IV v3.1](https://physionet.org/content/mimiciv/3.1/) and
+[MIMIC-IV-Note v2.2](https://physionet.org/content/mimic-iv-note/2.2/).
 
-> **Note on clinical notes:** The MIMIC-IV demo dataset explicitly excludes
-> free-text clinical notes. The dashboard synthesizes a structured "Clinical
-> Summary" per encounter from coded FHIR data (diagnoses, medications, labs,
-> procedures, vitals) instead.
+It loads de-identified patient records into PostgreSQL, converts them to FHIR R4
+transaction bundles, and serves them through three independent web dashboards.
+
+---
+
+## Three Pipelines
+
+| Pipeline | Output dir | Port | Conditions | Medications | Notes | Vitals / Labs |
+|---|---|---|:---:|:---:|:---:|:---:|
+| `main.py bundle` | `fhir_bundles/` | 8095 | ✅ | ✅ | ✅ | ✅ |
+| `main.py golddata` | `golddata_fhir_bundles/` | 8096 | ❌ | ❌ | ❌ | ✅ |
+| `main.py testing` | `testing/` | 8097 | ❌ | ❌ | ✅ | ✅ |
+
+**Full** — complete clinical record for every encounter.  
+**GoldData** — fully blind: all ICD diagnoses and medications removed from all encounters.  
+**Testing** — same blind as GoldData but with discharge summaries and radiology reports included.
 
 ---
 
 ## Dataset overview
 
-| Module | Tables | Key content                                                    |
-| ------ | ------ | -------------------------------------------------------------- |
-| `hosp` | 22     | Admissions, diagnoses, labs, medications, microbiology, orders |
-| `icu`  | 9      | ICU stays, chart events, inputs/outputs, procedures            |
+| Module | Tables | Key content |
+|---|---|---|
+| `hosp` | 22 | Admissions, diagnoses, labs, medications, microbiology, orders, OMR |
+| `icu` | 9 | ICU stays, chart events, inputs/outputs, procedure events |
+| `note` | 2 | Discharge summaries (`note.discharge`) · Radiology reports (`note.radiology`) |
 
-**Demo size:** 100 patients · 275 admissions · 140 ICU stays · ~1.4 M rows total.
+**Full dataset:** 364K patients · 5.7 GB compressed.
 
 ---
 
-## Pipelines
+## Three independent databases
 
-This project contains two fully independent FHIR generation pipelines.
-They share the same source data but use separate PostgreSQL containers,
-different UUID namespaces, separate output directories, and separate ports.
-
-### `standard_fhir` pipeline
-
-Generates complete FHIR R4 bundles — all resources included for all encounters.
-
-| Command                  | Output                                                    |
-| ------------------------ | --------------------------------------------------------- |
-| `python main.py load`    | Loads all CSV.gz files into PostgreSQL (port 5433)        |
-| `python main.py bundle`  | One FHIR transaction bundle per patient → `fhir_bundles/` |
-| `python main.py convert` | Flat NDJSON per resource type → `fhir_output/`            |
-
-Dashboard: `web/app.py` → <http://localhost:8095>
-
-### `golddata_fhir` pipeline
-
-Generates diagnosis-blind FHIR R4 bundles suitable for model evaluation and
-clinical decision support benchmarking. For each patient's **latest (most
-recent) encounter**, the following are intentionally withheld:
-
-- `Condition` resources (ICD diagnoses)
-- `MedicationRequest` resources (medications prescribed)
-- Discharge disposition from the `Encounter` resource
-
-Everything else is included for **all encounters** — vitals, labs, ICU
-chartevents, ICU procedure events, ICD-coded procedures performed, and
-microbiology reports.
-
-Historical (non-latest) encounters retain their complete data including diagnoses.
-
-| Command                                                   | Output                                                     |
-| --------------------------------------------------------- | ---------------------------------------------------------- |
-| `python -m etl.golddata_fhir_gen`                         | One golddata bundle per patient → `golddata_fhir_bundles/` |
-| `python -m etl.golddata_fhir_gen --patient <id>`          | Single-patient test run                                    |
-
-Dashboard: `web/golddata_app.py` → <http://localhost:8096>
+| Container | Port | DSN env var | Used by |
+|---|---|---|---|
+| `mimic_pg_standard` | 5433 | `MIMIC_DSN` | `main.py load` + `main.py bundle` |
+| `mimic_pg_golddata` | 5434 | `GOLDDATA_DSN` | `main.py load` + `main.py golddata` |
+| `mimic_pg_testing` | 5435 | `TESTING_DSN` | `main.py load` + `main.py testing` |
 
 ---
 
 ## Prerequisites
 
-- Docker + Docker Compose _(only needed for the ETL pipeline)_
+- Docker + Docker Compose
 - Python 3.12+
 
 ```bash
@@ -77,218 +56,190 @@ pip install psycopg2-binary fastapi "uvicorn[standard]"
 
 ---
 
-## Quick start — Standard Dashboard
+## Quick start — all three pipelines
 
-`fhir_bundles/` is already populated in this repo. Skip the ETL steps and
-start the dashboard directly:
-
-```bash
-uvicorn web.app:app --host 0.0.0.0 --port 8095 --reload
-```
-
-Open <http://localhost:8095> and select a patient from the dropdown.
-
----
-
-## Quick start — GoldData Dashboard
-
-After running `python -m etl.golddata_fhir_gen` (requires PostgreSQL):
-
-```bash
-uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
-```
-
-Open <http://localhost:8096>.
-
----
-
-## Quick start — Full ETL Pipeline
-
-### 1. Start both PostgreSQL containers
+### 1. Start the containers
 
 ```bash
 docker compose up -d
-docker compose ps    # wait until both show healthy
+docker compose ps    # wait until all three show healthy
 ```
 
-| Container           | Port | Purpose                    |
-| ------------------- | ---- | -------------------------- |
-| `mimic_pg_standard` | 5433 | Standard FHIR pipeline     |
-| `mimic_pg_golddata` | 5434 | GoldData FHIR pipeline     |
+### 2. Load MIMIC-IV data into each database
 
-### 2. Load the data
+Data is read from `dataset/` inside the project (hosp, icu, note subdirectories).
+No `--data-dir` or `--note-dir` flags are needed when using the default layout.
 
 ```bash
-# Load into standard container (port 5433)
+# Standard (port 5433) — reads dataset/ by default
 python main.py load
 
-# Load into golddata container (port 5434)
-MIMIC_DSN="host=localhost port=5434 dbname=mimiciv user=mimic password=mimic" \
-  python main.py load
+# GoldData (port 5434)
+python main.py load \
+  --dsn "host=localhost port=5434 dbname=mimiciv user=mimic password=mimic"
+
+# Testing (port 5435)
+python main.py load \
+  --dsn "host=localhost port=5435 dbname=mimiciv user=mimic password=mimic"
+```
+
+To load from a different location, pass `--data-dir` and `--note-dir` explicitly:
+
+```bash
+python main.py load \
+  --data-dir /path/to/mimiciv/3.1 \
+  --note-dir /path/to/mimic-iv-note/2.2/note
 ```
 
 ### 3. Generate FHIR bundles
 
-```bash
-# Standard pipeline
-python main.py bundle    # → fhir_bundles/
-python main.py convert   # → fhir_output/  (optional flat NDJSON)
+By default each pipeline selects **20 random patients**. Use `--limit` to change
+the count or `--no-random` for sequential ordering.
 
-# GoldData pipeline
-python -m etl.golddata_fhir_gen   # → golddata_fhir_bundles/
+```bash
+python main.py bundle    # → fhir_bundles/          (random 20 patients)
+python main.py golddata  # → golddata_fhir_bundles/  (random 20 patients)
+python main.py testing   # → testing/                (random 20 patients)
 ```
 
 ### 4. Run the dashboards
 
 ```bash
-# Standard dashboard (port 8095)
-uvicorn web.app:app --host 0.0.0.0 --port 8095 --reload
-
-# GoldData dashboard (port 8096)
+uvicorn web.app:app          --host 0.0.0.0 --port 8095 --reload
 uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
+uvicorn web.testing_app:app  --host 0.0.0.0 --port 8097 --reload
 ```
-
-Both dashboards can run simultaneously.
 
 ---
 
-## Standard dashboard tabs (`web/app.py`, port 8095)
+## CLI reference
 
-| Tab                       | Contents                                                                                       |
-| ------------------------- | ---------------------------------------------------------------------------------------------- |
-| **Patient Overview**      | Demographics · Vitals (colour-coded) · Medications · Past medical history · Tests · Lab values |
-| **Chief Complaint**       | Primary reason for most recent visit · Admission details · Associated diagnoses                |
-| **Diagnosis & Treatment** | Ranked ICD-coded condition list · Prescribed medications · Procedures performed                |
-| **Encounters**            | Collapsible accordion of all hospital encounters with nested ICU stays                         |
+```
+python main.py <subcommand> [options]
 
-## GoldData dashboard tabs (`web/golddata_app.py`, port 8096)
+Subcommands:
+  load      Load MIMIC-IV CSV.gz files into PostgreSQL
+  convert   PostgreSQL → flat FHIR NDJSON (one file per resource type)
+  bundle    Full pipeline  → fhir_bundles/
+  golddata  Blind pipeline → golddata_fhir_bundles/  (no Dx, no Meds, no Notes)
+  testing   Blind + notes  → testing/                (no Dx, no Meds, WITH Notes)
 
-| Mode / Tab                                          | Contents                                                                                    |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| **GoldData mode**                                   | Diagnosis-blind view — clearly labelled; shows blinded encounter `hadm_id`                  |
-| → Overview                                          | Demographics · Exclusion summary card · Latest vitals · Medications · Historical conditions |
-| → Vitals & Labs                                     | Full vital sign grid · Complete lab table with filter                                       |
-| → Meds & Procedures                                 | All medications administered · All procedures performed                                     |
-| → Encounters                                        | All encounters; latest is flagged `dx-blind` with amber border                              |
-| **Standard mode**                                   | Full `standard_fhir` data — all diagnoses included                                          |
-| → Overview / Diagnoses / Vitals & Labs / Encounters | Standard clinical view                                                                      |
-| **Compare mode**                                    | Side-by-side summary · Condition diff (excluded vs shared) · Vitals comparison              |
-| Pipeline status bar                                 | Bundle counts · Run buttons · Live log for both pipelines                                   |
+Common batch options (bundle / golddata / testing):
+  --dsn              Override PostgreSQL DSN
+  --output           Override output directory
+  --limit N          Number of patients to process (default: 20 when --random)
+  --offset N         Skip the first N patients (only applies with --no-random)
+  --subject-ids      Comma-separated list of specific subject IDs
+  --random           Random patient sample, default ON  (use --no-random for sequential)
+
+load-specific options:
+  --data-dir     Root dir containing hosp/ and icu/ (default: dataset/)
+  --note-dir     Note dir containing discharge.csv.gz / radiology.csv.gz (default: dataset/note/)
+```
 
 ---
 
 ## FHIR resource mappings
 
-Both pipelines produce the same resource types. The golddata pipeline adds
-`meta.tag: golddata_fhir` to every resource and embeds the blinded `hadm_id`
-in `Bundle.meta.extension`.
+| MIMIC-IV source | FHIR R4 resource | bundle | golddata | testing |
+|---|---|:---:|:---:|:---:|
+| `hosp.patients` | `Patient` | ✓ | ✓ | ✓ |
+| `hosp.admissions` | `Encounter` (hospital) | ✓ | ✓ | ✓ |
+| `icu.icustays` | `Encounter` (ICU) | ✓ | ✓ | ✓ |
+| `hosp.diagnoses_icd` | `Condition` | ✓ | **excluded** | **excluded** |
+| `hosp.prescriptions` | `MedicationRequest` | ✓ | **excluded** | **excluded** |
+| `hosp.procedures_icd` | `Procedure` | ✓ | ✓ | ✓ |
+| `hosp.labevents` | `Observation` (laboratory) | ✓ | ✓ | ✓ |
+| `icu.chartevents` | `Observation` (vital-signs) | ✓ | ✓ | ✓ |
+| `icu.procedureevents` | `Observation` (procedure) | ✓ | ✓ | ✓ |
+| `hosp.omr` | `Observation` (survey) | ✓ | ✓ | ✓ |
+| `hosp.microbiologyevents` | `DiagnosticReport` + `Observation` | ✓ | ✓ | ✓ |
+| `hosp.provider` | `Practitioner` | ✓ | ✓ | ✓ |
+| `note.discharge` | `DocumentReference` | ✓ | **excluded** | ✓ |
+| `note.radiology` | `DocumentReference` | ✓ | **excluded** | ✓ |
 
-| MIMIC-IV source           | FHIR R4 resource                   | standard_fhir | golddata_fhir (latest enc) |
-| ------------------------- | ---------------------------------- | :-----------: | :------------------------: |
-| `hosp.patients`           | `Patient`                          |       ✓       | ✓ + blinded-encounter ext  |
-| `hosp.admissions`         | `Encounter` (hospital)             |       ✓       |   ✓ (no discharge dispo)   |
-| `icu.icustays`            | `Encounter` (ICU)                  |       ✓       |             ✓              |
-| `hosp.diagnoses_icd`      | `Condition`                        |       ✓       |    **excluded** for latest |
-| `hosp.procedures_icd`     | `Procedure`                        |       ✓       |             ✓              |
-| `hosp.labevents`          | `Observation` (laboratory)         |       ✓       |             ✓              |
-| `icu.chartevents`         | `Observation` (vital-signs)        |       ✓       |             ✓              |
-| `icu.procedureevents`     | `Observation` (procedure)          |       ✓       |             ✓              |
-| `hosp.prescriptions`      | `MedicationRequest`                |       ✓       |    **excluded** for latest |
-| `hosp.microbiologyevents` | `DiagnosticReport` + `Observation` |       ✓       |             ✓              |
-| `hosp.omr`                | `Observation` (survey)             |       ✓       |             ✓              |
-| `hosp.provider`           | `Practitioner`                     |       ✓       |             ✓              |
+> **Patient cap:** 20 random patients by default — override with `--limit N` or `--no-random`.  
+> **Lab cap:** 500 most-recent lab events per patient.  
+> **Note cap:** 20 most-recent notes per type (discharge / radiology) per patient.
+
+---
+
+## Dashboard UI — tabs
+
+All three dashboards share the same `static/` UI. A coloured **dataset banner**
+at the top identifies which pipeline is active and which resources are included.
+
+| Tab | Contents |
+|---|---|
+| **Patient Overview** | Demographics · Vitals (colour-coded) · Medications · Past medical history · Tests · Lab table |
+| **Chief Complaint** | Primary reason for most recent visit · Admission details · Linked diagnoses |
+| **Diagnosis & Treatment** | Ranked ICD conditions · Medications · Procedures performed |
+| **Encounters** | Collapsible timeline of all hospital visits with nested ICU stays · per-encounter vitals, labs, notes |
+| **Clinical Notes** | Discharge summaries · Radiology reports · Searchable full text |
+
+Conditions and Medications tabs show "No data recorded" for GoldData and Testing bundles — this is correct and expected, not an error.
 
 ---
 
 ## Output directories
 
-| Directory                | Pipeline      | Contents                                 |
-| ------------------------ | ------------- | ---------------------------------------- |
-| `fhir_bundles/`          | standard_fhir | 100 × patient JSON (full data)           |
-| `fhir_output/`           | standard_fhir | Flat NDJSON per resource type (optional) |
-| `golddata_fhir_bundles/` | golddata_fhir | 100 × patient JSON (diagnosis-blind)     |
-
----
-
-## Project structure
-
-```text
-.
-├── main.py                     # CLI entry point (load / bundle / convert)
-├── docker-compose.yml          # Two PostgreSQL 16 containers (ports 5433, 5434)
-├── pyproject.toml
-│
-├── etl/                        # Data pipeline scripts
-│   ├── load_mimic.py           # CSV.gz → PostgreSQL loader
-│   ├── mimic_to_bundle.py      # PostgreSQL → standard_fhir transaction bundles
-│   ├── mimic_to_fhir.py        # PostgreSQL → standard_fhir flat NDJSON
-│   ├── golddata_fhir_gen.py    # GoldData pipeline CLI
-│   ├── golddata_builder.py     # GoldData FHIR resource builders (isolated namespace)
-│   └── generate_encounter_reports.py
-│
-├── web/                        # Web dashboards
-│   ├── parser.py               # Shared FHIR bundle → API response logic
-│   ├── app.py                  # Standard dashboard (port 8095, reads fhir_bundles/)
-│   └── golddata_app.py         # GoldData dashboard (port 8096, reads golddata_fhir_bundles/)
-│
-├── static/                     # Shared dashboard UI (served by both ports)
-│   ├── index.html
-│   ├── app.js
-│   └── style.css
-│
-├── sql/
-│   └── 01_schema.sql           # DDL for all 31 tables
-│
-├── fhir_bundles/               # standard_fhir bundles (100 × patient JSON)
-├── golddata_fhir_bundles/      # golddata_fhir bundles (100 × patient JSON)
-├── fhir_output/                # Flat NDJSON (standard_fhir, optional)
-├── hosp/                       # Source CSV.gz files (hosp module)
-└── icu/                        # Source CSV.gz files (icu module)
-```
+| Directory | Pipeline | Contents |
+|---|---|---|
+| `fhir_bundles/` | bundle | One JSON per patient — full clinical data |
+| `golddata_fhir_bundles/` | golddata | One JSON per patient — no Dx, no Meds, no Notes |
+| `testing/` | testing | One JSON per patient — no Dx, no Meds, WITH Notes |
+| `fhir_output/` | convert | Flat NDJSON per resource type (optional) |
 
 ---
 
 ## Environment variables
 
-| Variable       | Used by                              | Default                                       |
-| -------------- | ------------------------------------ | --------------------------------------------- |
-| `MIMIC_DSN`    | `main.py load`                       | `host=localhost port=5433 dbname=mimiciv ...` |
-| `GOLDDATA_DSN` | `etl/golddata_fhir_gen.py` (primary) | falls back to `MIMIC_DSN` then built-in       |
-| `GOLDDATA_OUT` | `etl/golddata_fhir_gen.py`           | `golddata_fhir_bundles`                       |
+| Variable | Default | Used by |
+|---|---|---|
+| `MIMIC_DSN` | `host=localhost port=5433 dbname=mimiciv user=mimic password=mimic` | load, bundle, convert |
+| `GOLDDATA_DSN` | `host=localhost port=5434 dbname=mimiciv user=mimic password=mimic` | golddata pipeline |
+| `TESTING_DSN` | `host=localhost port=5435 dbname=mimiciv user=mimic password=mimic` | testing pipeline |
+| `MIMIC_DATA_DIR` | `dataset/` | load — hosp/ and icu/ parent directory |
+| `MIMIC_NOTE_DIR` | `dataset/note/` | load — note CSV directory |
+| `GOLDDATA_OUT` | `golddata_fhir_bundles` | golddata output directory |
+| `TESTING_OUT` | `testing` | testing output directory |
 
 ---
 
-## Useful SQL queries
+## Project structure
 
-```sql
--- Patients with ICU stays
-SELECT p.subject_id, p.gender, p.anchor_age, i.first_careunit, i.los
-FROM hosp.patients p
-JOIN icu.icustays i USING (subject_id)
-ORDER BY i.los DESC;
-
--- Top diagnoses
-SELECT i.long_title, count(*) AS n
-FROM hosp.diagnoses_icd d
-JOIN hosp.d_icd_diagnoses i USING (icd_code, icd_version)
-GROUP BY i.long_title
-ORDER BY n DESC
-LIMIT 10;
-
--- Abnormal lab results
-SELECT d.label, l.value, l.valueuom, l.flag
-FROM hosp.labevents l
-JOIN hosp.d_labitems d USING (itemid)
-WHERE l.flag IS NOT NULL
-LIMIT 20;
-
--- Latest encounter per patient (golddata blinded encounter)
-SELECT subject_id, hadm_id, admittime
-FROM hosp.admissions a
-WHERE admittime = (
-  SELECT MAX(admittime) FROM hosp.admissions WHERE subject_id = a.subject_id
-)
-ORDER BY subject_id;
+```
+.
+├── main.py                      # CLI entry point
+├── docker-compose.yml           # Three PostgreSQL 16 containers (5433 / 5434 / 5435)
+├── pyproject.toml
+│
+├── etl/
+│   ├── load_mimic.py            # CSV.gz → PostgreSQL loader (all three DBs)
+│   ├── mimic_to_bundle.py       # Full pipeline — all resources including notes
+│   ├── mimic_to_fhir.py         # Flat NDJSON per resource type (optional)
+│   ├── golddata_fhir_gen.py     # Blind pipeline — no Dx / no Meds, optional notes
+│   ├── golddata_builder.py      # FHIR builders for golddata/testing (isolated UUID namespace)
+│   └── testing_gen.py           # Testing pipeline — calls golddata with include_notes=True
+│
+├── web/
+│   ├── parser.py                # Shared FHIR bundle → API response parser
+│   ├── app.py                   # Full dashboard      (port 8095, fhir_bundles/)
+│   ├── golddata_app.py          # GoldData dashboard  (port 8096, golddata_fhir_bundles/)
+│   └── testing_app.py           # Testing dashboard   (port 8097, testing/)
+│
+├── static/                      # Shared UI (served by all three apps)
+│   ├── index.html
+│   ├── app.js
+│   └── style.css
+│
+├── sql/
+│   └── 01_schema.sql            # DDL for all tables (hosp + icu + note schemas)
+│
+├── fhir_bundles/                # Full FHIR bundles
+├── golddata_fhir_bundles/       # GoldData bundles
+├── testing/                     # Testing bundles
+└── fhir_output/                 # Flat NDJSON (optional)
 ```
 
 ---
@@ -296,10 +247,10 @@ ORDER BY subject_id;
 ## Stopping / resetting
 
 ```bash
-# Stop containers (data persists in Docker volumes)
+# Stop containers (data preserved)
 docker compose down
 
-# Stop and delete all data
+# Full reset — deletes all loaded data
 docker compose down -v
 ```
 
@@ -307,8 +258,7 @@ docker compose down -v
 
 ## Data source
 
-This project uses the MIMIC-IV Clinical Database Demo v2.2 from PhysioNet:
-<https://doi.org/10.13026/07hj-2a80>
+This project uses:
 
-Access to the full MIMIC-IV dataset requires credentialing. The demo subset
-(100 patients) is openly available.
+- [MIMIC-IV v3.1](https://physionet.org/content/mimiciv/3.1/) — requires PhysioNet credentialing
+- [MIMIC-IV-Note v2.2](https://physionet.org/content/mimic-iv-note/2.2/) — requires PhysioNet credentialing

@@ -3,24 +3,26 @@
 ## Architecture
 
 ```text
-┌─────────────────────────────────┐   ┌─────────────────────────────────┐
-│  Standard FHIR Pipeline         │   │  GoldData FHIR Pipeline         │
-│                                 │   │                                 │
-│  Container : mimic_pg_standard  │   │  Container : mimic_pg_golddata  │
-│  Port      : 5433               │   │  Port      : 5434               │
-│  Script    : python main.py     │   │  Script    : golddata_fhir_gen  │
-│  Output    : fhir_bundles/      │   │  Output    : golddata_fhir_bundles/│
-│  Dashboard : port 8095 (app.py) │   │  Dashboard : port 8096          │
-│                                 │   │                                 │
-│  Full clinical data             │   │  Latest-encounter diagnoses and │
-│  All diagnoses included         │   │  medications intentionally      │
-│                                 │   │  excluded from JSON bundles     │
-└─────────────────────────────────┘   └─────────────────────────────────┘
+┌───────────────────────────┐  ┌───────────────────────────┐  ┌───────────────────────────┐
+│  Full Pipeline            │  │  GoldData Pipeline        │  │  Testing Pipeline         │
+│                           │  │                           │  │                           │
+│  Container: mimic_pg_     │  │  Container: mimic_pg_     │  │  Container: mimic_pg_     │
+│            standard       │  │            golddata       │  │            testing        │
+│  DB port : 5433           │  │  DB port : 5434           │  │  DB port : 5435           │
+│  Output  : fhir_bundles/  │  │  Output  : golddata_fhir_ │  │  Output  : testing/       │
+│  Dashboard: port 8095     │  │            bundles/       │  │  Dashboard: port 8097     │
+│                           │  │  Dashboard: port 8096     │  │                           │
+│  Conditions    ✓          │  │  Conditions    ✗          │  │  Conditions    ✗          │
+│  Medications   ✓          │  │  Medications   ✗          │  │  Medications   ✗          │
+│  Notes         ✓          │  │  Notes         ✗          │  │  Notes         ✓          │
+│  Vitals/Labs   ✓          │  │  Vitals/Labs   ✓          │  │  Vitals/Labs   ✓          │
+└───────────────────────────┘  └───────────────────────────┘  └───────────────────────────┘
 ```
 
-Both dashboards use the same `static/` UI. The difference is purely in the
-data: the GoldData JSON bundles never contain `Condition` resources or
-`MedicationRequest` resources for the patient's most recent hospital encounter.
+All three dashboards share the same `static/` UI. The difference is entirely in
+the JSON bundles each pipeline generates. A coloured dataset banner at the top of
+each dashboard identifies which pipeline is active and which resource types are
+included.
 
 ---
 
@@ -34,54 +36,51 @@ data: the GoldData JSON bundles never contain `Condition` resources or
 
 ---
 
-## Quick Start — Both Pipelines
+## Quick Start — All Three Pipelines
 
 Run all of the following in sequence. Each step must complete before the next.
 
+Data is read from `dataset/` inside the project root — no path flags needed.
+
 ```bash
-# ── Step 1: Start both database containers ─────────────────────────────────
+# ── Step 1: Start all three database containers ────────────────────────────
 docker compose up -d
+docker compose ps    # wait until all three show "healthy"
 
-# Wait until both are healthy (~10 seconds):
-docker compose ps
-
-# ── Step 2: Load MIMIC-IV data into the standard container (port 5433) ─────
+# ── Step 2: Load data into the standard container (port 5433) ──────────────
 python main.py load
 
-# ── Step 3: Load MIMIC-IV data into the golddata container (port 5434) ─────
-MIMIC_DSN="host=localhost port=5434 dbname=mimiciv user=mimic password=mimic" \
-  python main.py load
+# ── Step 3: Load data into the golddata container (port 5434) ──────────────
+python main.py load \
+  --dsn "host=localhost port=5434 dbname=mimiciv user=mimic password=mimic"
 
-# ── Step 4: Generate standard FHIR bundles ─────────────────────────────────
+# ── Step 4: Load data into the testing container (port 5435) ───────────────
+python main.py load \
+  --dsn "host=localhost port=5435 dbname=mimiciv user=mimic password=mimic"
+
+# ── Step 5: Generate Full FHIR bundles ─────────────────────────────────────
 python main.py bundle
-# Output → fhir_bundles/  (100 files, full clinical data)
+# Output → fhir_bundles/  (random 20 patients by default)
 
-# ── Step 5: Generate GoldData FHIR bundles ─────────────────────────────────
-python -m etl.golddata_fhir_gen
-# Output → golddata_fhir_bundles/  (100 files, latest-encounter dx+meds excluded)
+# ── Step 6: Generate GoldData FHIR bundles ─────────────────────────────────
+python main.py golddata
+# Output → golddata_fhir_bundles/  (random 20 patients by default)
 
-# ── Step 6: Start both dashboards (two separate terminals) ─────────────────
-uvicorn web.app:app           --host 0.0.0.0 --port 8095 --reload   # standard
-uvicorn web.golddata_app:app  --host 0.0.0.0 --port 8096 --reload   # golddata
+# ── Step 7: Generate Testing FHIR bundles ──────────────────────────────────
+python main.py testing
+# Output → testing/  (random 20 patients by default)
+
+# ── Step 8: Start all three dashboards (three separate terminals) ───────────
+uvicorn web.app:app          --host 0.0.0.0 --port 8095 --reload
+uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
+uvicorn web.testing_app:app  --host 0.0.0.0 --port 8097 --reload
 ```
 
-| URL                     | Pipeline | What it shows                                  |
-| ----------------------- | -------- | ---------------------------------------------- |
-| <http://localhost:8095> | Standard | Full data — all diagnoses and medications      |
-| <http://localhost:8096> | GoldData | Latest encounter is diagnosis/treatment-blind  |
-
----
-
-## Standard Dashboard Only (no GoldData needed)
-
-`fhir_bundles/` is already included in the repository. You can run the
-standard dashboard immediately without Docker:
-
-```bash
-uvicorn web.app:app --host 0.0.0.0 --port 8095 --reload
-```
-
-Open <http://localhost:8095> and select a patient.
+| URL                     | Pipeline | Conditions | Medications | Notes |
+| ----------------------- | -------- | :--------: | :---------: | :---: |
+| <http://localhost:8095> | Full     | ✓          | ✓           | ✓     |
+| <http://localhost:8096> | GoldData | ✗          | ✗           | ✗     |
+| <http://localhost:8097> | Testing  | ✗          | ✗           | ✓     |
 
 ---
 
@@ -90,12 +89,13 @@ Open <http://localhost:8095> and select a patient.
 ### Starting / stopping
 
 ```bash
-# Start both containers
+# Start all three containers
 docker compose up -d
 
-# Start only one container
+# Start a single container
 docker compose up -d db_standard
 docker compose up -d db_golddata
+docker compose up -d db_testing
 
 # Check health
 docker compose ps
@@ -113,54 +113,55 @@ docker compose down -v
 | -------------------- | --------- | ---- | -------- | ----- | -------- |
 | `mimic_pg_standard`  | localhost | 5433 | mimiciv  | mimic | mimic    |
 | `mimic_pg_golddata`  | localhost | 5434 | mimiciv  | mimic | mimic    |
+| `mimic_pg_testing`   | localhost | 5435 | mimiciv  | mimic | mimic    |
 
 ### Connect with psql
 
 ```bash
-# Standard container
 docker exec -it mimic_pg_standard psql -U mimic -d mimiciv
-
-# GoldData container
-docker exec -it mimic_pg_golddata psql -U mimic -d mimiciv
+docker exec -it mimic_pg_golddata  psql -U mimic -d mimiciv
+docker exec -it mimic_pg_testing   psql -U mimic -d mimiciv
 ```
 
 ---
 
-## Standard FHIR Pipeline (port 8095)
+## Full FHIR Pipeline (port 8095)
 
 Uses `mimic_pg_standard` on port 5433.
 
-### Load data
+### Full — load data
 
 ```bash
 python main.py load
 ```
 
-Expected output:
-
-```text
-Connected to database.
-  Loading hosp.provider ... 40508 rows
-  Loading hosp.patients ... 100 rows
-  ...
-Done. 1398500 total rows loaded.
-```
-
+Reads `dataset/hosp/`, `dataset/icu/`, and `dataset/note/` by default.
 Safe to re-run — truncates tables before loading.
 
-### Generate bundles
+### Full — generate bundles
 
 ```bash
 python main.py bundle
 ```
 
-Output → `fhir_bundles/` — 100 JSON files, one per patient.
+Output → `fhir_bundles/` — one JSON file per patient. Defaults to **20 random patients**.
 
-Each bundle contains: `Patient`, `Organization`, `Practitioner`, `Encounter`,
-`Condition`, `Procedure`, `Observation` (vitals + labs), `MedicationRequest`,
-`DiagnosticReport`.
+```bash
+# Change the count
+python main.py bundle --limit 50
 
-### Run dashboard
+# Sequential ordering instead of random
+python main.py bundle --no-random --limit 100
+
+# Specific patients
+python main.py bundle --subject-ids 10000032,10000084
+```
+
+Each bundle contains: `Patient`, `Practitioner`, `Encounter` (hospital + ICU),
+`Condition`, `Procedure`, `Observation` (vitals + labs + ICU events + OMR),
+`MedicationRequest`, `DiagnosticReport`, `DocumentReference` (discharge + radiology).
+
+### Full — start dashboard
 
 ```bash
 uvicorn web.app:app --host 0.0.0.0 --port 8095 --reload
@@ -172,169 +173,189 @@ uvicorn web.app:app --host 0.0.0.0 --port 8095 --reload
 
 Uses `mimic_pg_golddata` on port 5434.
 
-The GoldData pipeline generates **diagnosis-and-treatment-blind** FHIR bundles
-for model evaluation. For each patient's most-recent hospital encounter, the
-following are **never written into the JSON file**:
+The GoldData pipeline produces **fully blind** bundles: **all** ICD diagnoses,
+medications, and clinical notes are removed from every encounter.
 
-- `Condition` resources — ICD-9/10 diagnoses
-- `MedicationRequest` resources — medications prescribed during that encounter
-- `dischargeDisposition` — outcome signal on the `Encounter` resource
-
-All other data is present for every encounter including the latest:
-vitals, lab results, ICU chart events, ICU procedure events, ICD-coded
-procedures performed, microbiology reports.
-
-Historical encounters (all encounters except the latest) retain complete data.
-
-### Load data into the golddata container
+### GoldData — load data
 
 ```bash
-MIMIC_DSN="host=localhost port=5434 dbname=mimiciv user=mimic password=mimic" \
-  python main.py load
+python main.py load \
+  --dsn "host=localhost port=5434 dbname=mimiciv user=mimic password=mimic"
 ```
 
-### Generate GoldData bundles
+Reads the same `dataset/` directory as the standard pipeline.
+
+### GoldData — generate bundles
+
+```bash
+python main.py golddata
+```
+
+Defaults to **20 random patients**. Override as needed:
+
+```bash
+# More patients
+python main.py golddata --limit 50
+
+# Sequential ordering
+python main.py golddata --no-random --limit 100
+
+# Specific patients
+python main.py golddata --subject-ids 10000032,10000084
+```
+
+Or directly:
 
 ```bash
 python -m etl.golddata_fhir_gen
 ```
 
-Expected output:
-
-```text
-GoldData FHIR Generator
-  DSN        : host=localhost port=5434 dbname=mimiciv user=mimic password=mimic
-  Output     : /path/to/golddata_fhir_bundles/
-  Mode       : exclude diagnoses for each patient's latest encounter
-
-Processing 100 patients → golddata_fhir_bundles/
-
-  [  1/100]  subject  10000032   entries  latest_hadm=29079034  → 10000032.json
-  ...
-
-Done. 100/100 bundles.
-```
-
-**Test a single patient first:**
+**Test a single patient:**
 
 ```bash
 python -m etl.golddata_fhir_gen --patient 10000032
 ```
 
-**Custom DSN or output directory:**
+**Custom DSN or output:**
 
 ```bash
-python -m etl.golddata_fhir_gen --dsn "host=myhost port=5434 dbname=mimiciv user=mimic password=mimic"
-python -m etl.golddata_fhir_gen --output /custom/path/golddata_bundles
+python -m etl.golddata_fhir_gen \
+  --dsn "host=myhost port=5434 dbname=mimiciv user=mimic password=mimic" \
+  --output /custom/path/golddata_bundles
 ```
 
-**Environment variables (alternative to flags):**
-
-```bash
-export GOLDDATA_DSN="host=localhost port=5434 dbname=mimiciv user=mimic password=mimic"
-export GOLDDATA_OUT="golddata_fhir_bundles"
-python -m etl.golddata_fhir_gen
-```
-
-### Start the GoldData dashboard
+### GoldData — start dashboard
 
 ```bash
 uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
 ```
 
-Open <http://localhost:8096>.
+---
+
+## Testing FHIR Pipeline (port 8097)
+
+Uses `mimic_pg_testing` on port 5435.
+
+The Testing pipeline is identical to GoldData **plus** clinical notes
+(`DocumentReference` — discharge summaries and radiology reports). This allows
+evaluation of note-based models while keeping diagnoses and medications blind.
+
+### Testing — load data
+
+```bash
+python main.py load \
+  --dsn "host=localhost port=5435 dbname=mimiciv user=mimic password=mimic"
+```
+
+Reads the same `dataset/` directory as the other two pipelines.
+
+### Testing — generate bundles
+
+```bash
+python main.py testing
+```
+
+Defaults to **20 random patients**. Override as needed:
+
+```bash
+# More patients
+python main.py testing --limit 50
+
+# Sequential ordering
+python main.py testing --no-random --limit 100
+
+# Specific patients
+python main.py testing --subject-ids 10000032,10000084
+```
+
+Or directly:
+
+```bash
+python -m etl.testing_gen
+```
+
+**Test a single patient:**
+
+```bash
+python -m etl.testing_gen --patient 10000032
+```
+
+### Testing — start dashboard
+
+```bash
+uvicorn web.testing_app:app --host 0.0.0.0 --port 8097 --reload
+```
 
 ---
 
 ## Environment Variables
 
-| Variable      | Used by                  | Default                                   |
-| ------------- | ------------------------ | ----------------------------------------- |
-| `MIMIC_DSN`   | `main.py load`           | `host=localhost port=5433 ...`            |
-| `GOLDDATA_DSN`| `etl/golddata_fhir_gen.py`   | `host=localhost port=5434 ...`            |
-| `GOLDDATA_OUT`| `etl/golddata_fhir_gen.py`   | `golddata_fhir_bundles`                   |
+| Variable          | Used by                    | Default                              |
+| ----------------- | -------------------------- | ------------------------------------ |
+| `MIMIC_DSN`       | `main.py load`, `bundle`   | `host=localhost port=5433 …`         |
+| `GOLDDATA_DSN`    | `main.py golddata`         | `host=localhost port=5434 …`         |
+| `TESTING_DSN`     | `main.py testing`          | `host=localhost port=5435 …`         |
+| `GOLDDATA_OUT`    | `etl/golddata_fhir_gen.py` | `golddata_fhir_bundles`              |
+| `TESTING_OUT`     | `etl/testing_gen.py`       | `testing`                            |
+| `MIMIC_DATA_DIR`  | `main.py load`             | `dataset/`                           |
+| `MIMIC_NOTE_DIR`  | `main.py load`             | `dataset/note/`                      |
 
 ---
 
-## What Makes a GoldData Bundle Different
+## What Each Bundle Contains
 
-For the blinded (latest) encounter the JSON bundle contains:
-
-| Resource type                       | Standard bundle | GoldData bundle |
-| ----------------------------------- | --------------- | --------------- |
-| `Condition`                         | ✓ included      | ✗ absent        |
-| `MedicationRequest`                 | ✓ included      | ✗ absent        |
-| `dischargeDisposition` on Encounter | ✓ included      | ✗ absent        |
-| `Observation` (vitals + labs)       | ✓ included      | ✓ included      |
-| `Procedure`                         | ✓ included      | ✓ included      |
-| `DiagnosticReport`                  | ✓ included      | ✓ included      |
-
-Historical encounters (all encounters before the latest) are identical in both
-pipelines — full data including diagnoses and medications.
+| Resource type          | Full (`fhir_bundles/`) | GoldData | Testing |
+| ---------------------- | :--------------------: | :------: | :-----: |
+| `Patient`              | ✓                      | ✓        | ✓       |
+| `Encounter` (hospital) | ✓                      | ✓        | ✓       |
+| `Encounter` (ICU)      | ✓                      | ✓        | ✓       |
+| `Condition`            | ✓                      | **✗**    | **✗**   |
+| `MedicationRequest`    | ✓                      | **✗**    | **✗**   |
+| `Procedure`            | ✓                      | ✓        | ✓       |
+| `Observation` (labs)   | ✓                      | ✓        | ✓       |
+| `Observation` (vitals) | ✓                      | ✓        | ✓       |
+| `DiagnosticReport`     | ✓                      | ✓        | ✓       |
+| `Practitioner`         | ✓                      | ✓        | ✓       |
+| `DocumentReference`    | ✓                      | **✗**    | ✓       |
 
 ---
 
 ## Generating Output Files
 
-All three output directories are produced by separate commands. Generation is
-safe to re-run at any time — files are overwritten.
+All output directories are safe to regenerate at any time — files are overwritten.
 
-### `fhir_bundles/` — Standard FHIR transaction bundles
-
-Requires: standard container running (`mimic_pg_standard`, port 5433) and data loaded.
+### `fhir_bundles/` — Full FHIR bundles
 
 ```bash
 python main.py bundle
 ```
 
-- Output: `fhir_bundles/` — 100 JSON files, one per patient
-- Each file is a FHIR R4 transaction bundle containing: `Patient`, `Organization`,
-  `Practitioner`, `Encounter` (hospital + ICU), `Condition`, `Procedure`,
-  `Observation` (vitals + labs + ICU events + OMR), `MedicationRequest`,
-  `DiagnosticReport`
-- All encounters included, all diagnoses and medications present
-
-### `golddata_fhir_bundles/` — Diagnosis-blind FHIR bundles
-
-Requires: golddata container running (`mimic_pg_golddata`, port 5434) and data loaded.
+### `golddata_fhir_bundles/` — Blind bundles (no diagnoses, no meds, no notes)
 
 ```bash
-python -m etl.golddata_fhir_gen
+python main.py golddata
 ```
 
-- Output: `golddata_fhir_bundles/` — 100 JSON files, one per patient
-- Identical structure to standard bundles **except** for each patient's latest encounter:
-  - `Condition` resources are **absent** (ICD diagnoses withheld)
-  - `MedicationRequest` resources are **absent** (prescriptions withheld)
-  - `dischargeDisposition` field is **absent** (outcome signal withheld)
-- Vitals, labs, procedures, microbiology, and ICU data are fully present for all encounters
-- Historical encounters retain complete data including diagnoses and medications
-
-Test a single patient before running all 100:
+### `testing/` — Blind + notes bundles (no diagnoses, no meds, WITH notes)
 
 ```bash
-python -m etl.golddata_fhir_gen --patient 10000032
+python main.py testing
 ```
 
 ### `fhir_output/` — Flat NDJSON (bulk ingestion format)
-
-Requires: standard container running and data loaded.
 
 ```bash
 python main.py convert
 ```
 
-- Output: `fhir_output/` — one `.ndjson` file per resource type (e.g. `Patient.ndjson`, `Condition.ndjson`)
-- Useful for bulk ingestion into FHIR servers or analytics pipelines
-- Derived from the same data as `fhir_bundles/`
+One `.ndjson` file per resource type (e.g. `Patient.ndjson`, `Condition.ndjson`).
+Useful for bulk ingestion into FHIR servers or analytics pipelines.
 
 ---
 
 ## Troubleshooting
 
-### Connection refused on port 5433 or 5434
-
-The relevant container is not running.
+### Connection refused on port 5433, 5434, or 5435
 
 ```bash
 docker compose up -d
@@ -342,14 +363,14 @@ docker compose ps    # check health status
 docker compose logs  # check for startup errors
 ```
 
-### Port already in use
+### Port already in use (dashboard)
 
-Change the left-hand port in `docker-compose.yml` and update your DSN:
+```bash
+# Check what is using the port
+fuser 8095/tcp
 
-```yaml
-# e.g. move standard to 5435
-ports:
-  - "5435:5432"
+# Start on a different port
+uvicorn web.app:app --host 0.0.0.0 --port 9095
 ```
 
 ### `psycopg2` not found
@@ -360,11 +381,12 @@ pip install psycopg2-binary
 
 ### Dashboard shows no data
 
-Ensure the relevant bundles directory contains `.json` files:
+Check that the relevant bundles directory contains `.json` files:
 
 ```bash
 ls fhir_bundles/           # for port 8095
 ls golddata_fhir_bundles/  # for port 8096
+ls testing/                # for port 8097
 ```
 
 If empty, run the corresponding generation step above.
@@ -373,8 +395,11 @@ If empty, run the corresponding generation step above.
 
 ```bash
 docker compose down -v    # delete all volumes and data
-docker compose up -d      # fresh containers
-python main.py load       # reload standard
-MIMIC_DSN="host=localhost port=5434 dbname=mimiciv user=mimic password=mimic" \
-  python main.py load     # reload golddata
+docker compose up -d      # fresh containers (re-runs schema DDL)
+docker compose ps         # wait until all three are healthy
+
+# Reload all three databases (all read from dataset/ by default)
+python main.py load
+python main.py load --dsn "host=localhost port=5434 dbname=mimiciv user=mimic password=mimic"
+python main.py load --dsn "host=localhost port=5435 dbname=mimiciv user=mimic password=mimic"
 ```

@@ -14,13 +14,61 @@ const patientInfoBar = $("patientInfoBar");
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 (async () => {
-  await loadPatients();
+  await Promise.all([loadPatients(), loadDatasetInfo()]);
   patientSelect.addEventListener("change", e => loadPatient(e.target.value));
   document.querySelectorAll(".tab-btn").forEach(btn =>
     btn.addEventListener("click", () => activateTab(btn.dataset.tab))
   );
   $("labSearch").addEventListener("input", e => filterLabs(e.target.value));
+  $("noteSearch").addEventListener("input", e => filterNotes(e.target.value));
 })();
+
+// ── Dataset info banner ───────────────────────────────────────────────────────
+async function loadDatasetInfo() {
+  try {
+    const res = await fetch("/api/info");
+    if (!res.ok) return;
+    const info = await res.json();
+    renderDatasetBanner(info);
+  } catch (_) { /* optional endpoint — ignore errors */ }
+}
+
+function renderDatasetBanner(info) {
+  const banner = $("datasetBanner");
+  if (!banner) return;
+
+  const badge = $("dsBadge");
+  badge.textContent = info.label || info.mode;
+  badge.style.setProperty("--ds-color", info.color || "#3b82f6");
+
+  $("dsDesc").textContent = info.description || "";
+
+  const inc = info.includes || {};
+  const chips = [
+    ["conditions",  "fa-stethoscope",    "Diagnoses"],
+    ["medications", "fa-pills",          "Medications"],
+    ["notes",       "fa-file-medical",   "Notes"],
+    ["vitals",      "fa-heart-pulse",    "Vitals"],
+    ["labs",        "fa-flask-vial",     "Labs"],
+    ["procedures",  "fa-syringe",        "Procedures"],
+  ];
+  const wrap = $("dsIncludes");
+  wrap.innerHTML = "";
+  chips.forEach(([key, icon, label]) => {
+    const on = inc[key] !== false;
+    const el = document.createElement("span");
+    el.className = on ? "ds-chip ds-chip-on" : "ds-chip ds-chip-off";
+    el.innerHTML = `<i class="fas ${icon}"></i> ${label}`;
+    if (!on) el.title = `${label} excluded from this dataset`;
+    wrap.appendChild(el);
+  });
+
+  if (info.bundleCount != null) {
+    $("dsBundleCount").textContent = `${info.bundleCount.toLocaleString()} patients`;
+  }
+
+  banner.classList.remove("hidden");
+}
 
 // ── Patient list ──────────────────────────────────────────────────────────────
 async function loadPatients() {
@@ -98,6 +146,7 @@ function render(d) {
   renderComplaint(d);
   renderValidation(d);
   renderEncounters(d.encounters);
+  renderNotes(d.notes || []);
 }
 
 // ── Info bar ──────────────────────────────────────────────────────────────────
@@ -375,7 +424,8 @@ function renderEncounters(encounters) {
     const nLabs    = ed.labs?.length              || 0;
     const nVitals  = ed.vitals?.length            || 0;
     const nReports = ed.diagnosticReports?.length || 0;
-    const totalItems = nConds + nMeds + nProcs + nLabs + nVitals + nReports;
+    const nNotes   = ed.notes?.length             || 0;
+    const totalItems = nConds + nMeds + nProcs + nLabs + nVitals + nReports + nNotes;
 
     // Abnormal lab count for quick alert
     const nAbnormal = (ed.labs || []).filter(l => l.flag && l.flag !== "N").length;
@@ -412,6 +462,7 @@ function renderEncounters(encounters) {
         ${statChip("fa-heart-pulse",          "#f87171", nVitals,  "Vitals")}
         ${statChip("fa-flask-vial",           "#818cf8", nLabs,    "Labs")}
         ${statChip("fa-vial-circle-check",    "#38bdf8", nReports, "Reports")}
+        ${nNotes > 0 ? statChip("fa-file-medical", "#34d399", nNotes, "Notes") : ""}
         ${nAbnormal > 0
           ? `<span class="enc-stat-chip enc-stat-abnormal">
                <i class="fas fa-triangle-exclamation"></i> ${nAbnormal} abnormal lab${nAbnormal !== 1 ? "s" : ""}
@@ -467,7 +518,7 @@ function renderEncounters(encounters) {
         <!-- Stats bar -->
         ${statsBar}
 
-        <!-- Clinical Note (synthesized) -->
+        <!-- Clinical Note (synthesized) or real note preview -->
         ${encClinicalNote(enc, ed)}
 
         <!-- ── Clinical data grid ── -->
@@ -490,6 +541,9 @@ function renderEncounters(encounters) {
             ${encSectionProcedures(ed.procedures)}
             ${encSectionReports(ed.diagnosticReports)}
           </div>
+
+          <!-- Row 5: Clinical Notes (full width, only when present) -->
+          ${(ed.notes?.length) ? encSectionNotes(ed.notes) : ""}
 
         </div>
       </div>
@@ -688,6 +742,7 @@ function encClinicalNote(enc, ed) {
   const procedures  = ed.procedures        || [];
   const vitals      = ed.vitals            || [];
   const reports     = ed.diagnosticReports || [];
+  const hasRealNotes = (ed.notes?.length || 0) > 0;
 
   const abnormalLabs = labs.filter(l => l.flag && l.flag !== "N");
   const criticalLabs = labs.filter(l => l.flag === "HH" || l.flag === "LL");
@@ -744,8 +799,13 @@ function encClinicalNote(enc, ed) {
   <div class="enc-note-card">
     <div class="enc-note-header">
       <i class="fas fa-file-medical" style="color:#58a6ff;"></i>
-      <span>Clinical Note</span>
-      <span class="enc-note-generated-tag">Synthesized from FHIR · No free-text notes in dataset</span>
+      <span>Clinical Summary</span>
+      ${hasRealNotes
+        ? `<span class="enc-note-generated-tag" style="background:rgba(52,211,153,0.12);color:#34d399;border-color:#34d39933;">
+             <i class="fas fa-circle-check" style="font-size:0.6rem;"></i> Real notes attached — see below
+           </span>`
+        : `<span class="enc-note-generated-tag">Synthesized from FHIR · No free-text notes in bundle</span>`
+      }
     </div>
     <div class="enc-note-body">
 
@@ -821,6 +881,120 @@ function toggleEnc(header) {
   const open    = !body.classList.contains("hidden");
   body.classList.toggle("hidden", open);
   chevron.style.transform = open ? "" : "rotate(180deg)";
+}
+
+// ── Clinical Notes tab ────────────────────────────────────────────────────────
+
+function renderNotes(notes) {
+  const discharge = notes.filter(n => n.category === "discharge");
+  const radiology = notes.filter(n => n.category === "radiology");
+  const other     = notes.filter(n => n.category !== "discharge" && n.category !== "radiology");
+
+  $("notesTotalBadge").textContent = `${notes.length} note${notes.length !== 1 ? "s" : ""}`;
+  $("dischargeCount").textContent  = discharge.length;
+  $("radiologyCount").textContent  = radiology.length;
+  $("otherNotesCount").textContent = other.length;
+
+  renderNoteGroup("dischargeContent",  "dischargeEmpty",  discharge);
+  renderNoteGroup("radiologyContent",  "radiologyEmpty",  radiology);
+  renderNoteGroup("otherNotesContent", "otherNotesEmpty", other);
+}
+
+function renderNoteGroup(contentId, emptyId, notes) {
+  const el = $(contentId);
+  if (!notes.length) {
+    $(emptyId).classList.remove("hidden");
+    return;
+  }
+  el.innerHTML = notes.map((n, idx) => noteCard(n, `${contentId}-${idx}`)).join("");
+}
+
+function noteCard(n, uid) {
+  const preview  = n.preview ? esc(n.preview) + (n.text.length > 300 ? "…" : "") : "<em style='color:#484f58;'>No content</em>";
+  const hasMore  = n.text.length > 300;
+  const fullText = hasMore ? esc(n.text) : "";
+  return `
+  <div class="note-card" data-note-text="${esc((n.typeDisplay + " " + n.text).toLowerCase())}">
+    <div class="note-card-header" onclick="toggleNote(this)">
+      <div class="flex items-center gap-2 min-w-0 flex-1">
+        <i class="fas fa-file-lines shrink-0" style="color:#34d399;font-size:0.85rem;"></i>
+        <span class="font-medium truncate" style="color:#cdd9e5;">${esc(n.typeDisplay)}</span>
+        ${n.date ? `<span class="note-date-chip">${esc(n.date)}</span>` : ""}
+      </div>
+      <i class="fas fa-chevron-down note-chevron shrink-0 text-xs" style="color:#484f58;"></i>
+    </div>
+    <div class="note-body hidden">
+      <p class="note-preview-text">${preview}</p>
+      ${hasMore ? `
+      <div class="note-full hidden" id="noteFull-${uid}">
+        <pre class="note-full-text">${fullText}</pre>
+      </div>
+      <button class="note-expand-btn" onclick="toggleFullNote(this, 'noteFull-${uid}')">
+        <i class="fas fa-expand-alt" style="font-size:0.7rem;"></i> Show full text
+      </button>` : ""}
+    </div>
+  </div>`;
+}
+
+function toggleNote(header) {
+  const body    = header.nextElementSibling;
+  const chevron = header.querySelector(".note-chevron");
+  const open    = !body.classList.contains("hidden");
+  body.classList.toggle("hidden", open);
+  chevron.style.transform = open ? "" : "rotate(180deg)";
+}
+
+function toggleFullNote(btn, id) {
+  const el   = $(id);
+  const open = !el.classList.contains("hidden");
+  el.classList.toggle("hidden", open);
+  btn.innerHTML = open
+    ? `<i class="fas fa-expand-alt" style="font-size:0.7rem;"></i> Show full text`
+    : `<i class="fas fa-compress-alt" style="font-size:0.7rem;"></i> Collapse`;
+}
+
+function filterNotes(query) {
+  const q = query.toLowerCase().trim();
+  document.querySelectorAll(".note-card").forEach(card => {
+    const text = card.dataset.noteText || "";
+    card.style.display = !q || text.includes(q) ? "" : "none";
+  });
+}
+
+// ── Notes section inside encounter card ───────────────────────────────────────
+
+function encSectionNotes(notes) {
+  const header = encSecHeader("fa-file-medical", "#34d399", "Clinical Notes", notes.length);
+  const body   = `
+    <div class="divide-y divide-gray-800/60">
+      ${notes.map((n, i) => {
+        const preview = n.preview
+          ? esc(n.preview) + (n.text.length > 300 ? "…" : "")
+          : "<em style='color:#484f58;'>No content</em>";
+        const uid     = `encNote-${i}-${n.id || i}`;
+        const hasMore = n.text.length > 300;
+        return `
+        <div class="enc-note-item">
+          <div class="enc-note-item-header" onclick="toggleNote(this)">
+            <i class="fas fa-file-lines shrink-0" style="color:#34d399;font-size:0.8rem;"></i>
+            <span class="font-medium" style="color:#cdd9e5;font-size:0.85rem;">${esc(n.typeDisplay)}</span>
+            ${n.date ? `<span class="note-date-chip">${esc(n.date)}</span>` : ""}
+            <i class="fas fa-chevron-down note-chevron ml-auto shrink-0 text-xs" style="color:#484f58;"></i>
+          </div>
+          <div class="enc-note-item-body hidden">
+            <p class="note-preview-text">${preview}</p>
+            ${hasMore ? `
+            <div class="note-full hidden" id="${uid}">
+              <pre class="note-full-text">${esc(n.text)}</pre>
+            </div>
+            <button class="note-expand-btn" onclick="toggleFullNote(this,'${uid}')">
+              <i class="fas fa-expand-alt" style="font-size:0.7rem;"></i> Show full text
+            </button>` : ""}
+          </div>
+        </div>`;
+      }).join("")}
+    </div>`;
+  return `<div class="enc-section enc-section-full">${header}${body}</div>`;
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────────

@@ -1,8 +1,9 @@
--- MIMIC-IV v2.2 Schema
--- Two modules: hosp (hospital) and icu (intensive care unit)
+-- MIMIC-IV Schema (supports v2.2 demo and v3.1 full dataset)
+-- Modules: hosp (hospital), icu (intensive care unit), note (clinical notes)
 
 CREATE SCHEMA IF NOT EXISTS hosp;
 CREATE SCHEMA IF NOT EXISTS icu;
+CREATE SCHEMA IF NOT EXISTS note;
 
 -- ============================================================
 -- HOSP MODULE
@@ -29,7 +30,7 @@ CREATE TABLE hosp.admissions (
     admission_location  VARCHAR(60),
     discharge_location  VARCHAR(60),
     insurance           VARCHAR(30),
-    language            VARCHAR(20),
+    language            TEXT,
     marital_status      VARCHAR(30),
     race                VARCHAR(80),
     edregtime           TIMESTAMP,
@@ -168,7 +169,7 @@ CREATE TABLE hosp.microbiologyevents (
     org_itemid          INTEGER,
     org_name            VARCHAR(100),
     isolate_num         SMALLINT,
-    quantity            VARCHAR(20),
+    quantity            TEXT,
     ab_itemid           INTEGER,
     ab_name             VARCHAR(60),
     dilution_text       VARCHAR(10),
@@ -224,7 +225,7 @@ CREATE TABLE hosp.prescriptions (
     drug_type           VARCHAR(20),
     drug                VARCHAR(100),
     formulary_drug_cd   VARCHAR(20),
-    gsn                 VARCHAR(200),
+    gsn                 TEXT,
     ndc                 VARCHAR(25),
     prod_strength       TEXT,
     form_rx             VARCHAR(20),
@@ -253,7 +254,7 @@ CREATE TABLE hosp.pharmacy (
     disp_sched          TEXT,
     infusion_type       VARCHAR(15),
     sliding_scale       VARCHAR(5),
-    lockout_interval    VARCHAR(20),
+    lockout_interval    VARCHAR(50),
     basal_rate          DOUBLE PRECISION,
     one_hr_max          VARCHAR(10),
     doses_per_24_hrs    DOUBLE PRECISION,
@@ -303,8 +304,8 @@ CREATE TABLE hosp.emar_detail (
     product_code                        VARCHAR(30),
     product_description                 TEXT,
     product_description_other           TEXT,
-    prior_infusion_rate                 VARCHAR(30),
-    infusion_rate                       VARCHAR(30),
+    prior_infusion_rate                 VARCHAR(40),
+    infusion_rate                       VARCHAR(40),
     infusion_rate_adjustment            VARCHAR(50),
     infusion_rate_adjustment_amount     VARCHAR(30),
     infusion_rate_unit                  VARCHAR(30),
@@ -464,4 +465,32 @@ CREATE TABLE icu.procedureevents (
     statusdescription       VARCHAR(20),
     originalamount          DOUBLE PRECISION,
     originalrate            DOUBLE PRECISION
+);
+
+-- ============================================================
+-- NOTE MODULE (MIMIC-IV-Note v2.2)
+-- ============================================================
+
+CREATE TABLE note.discharge (
+    note_id    VARCHAR(25) NOT NULL,
+    subject_id INTEGER NOT NULL,
+    hadm_id    INTEGER,
+    note_type  VARCHAR(10),
+    note_seq   SMALLINT,
+    charttime  TIMESTAMP,
+    storetime  TIMESTAMP,
+    text       TEXT,
+    PRIMARY KEY (note_id)
+);
+
+CREATE TABLE note.radiology (
+    note_id    VARCHAR(25) NOT NULL,
+    subject_id INTEGER NOT NULL,
+    hadm_id    INTEGER,
+    note_type  VARCHAR(10),
+    note_seq   SMALLINT,
+    charttime  TIMESTAMP,
+    storetime  TIMESTAMP,
+    text       TEXT,
+    PRIMARY KEY (note_id)
 );

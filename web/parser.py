@@ -1,39 +1,44 @@
 """Shared FHIR bundle parsing logic used by both web/app.py and web/golddata_app.py."""
 
+import base64
 import re
 from datetime import datetime
 
 VITAL_LOINC = {
-    "8867-4": "Heart Rate",
-    "8480-6": "Systolic BP",
-    "8462-4": "Diastolic BP",
-    "9279-1": "Respiratory Rate",
-    "8310-5": "Temperature",
+    "8867-4":  "Heart Rate",
+    "8480-6":  "Systolic BP",
+    "8462-4":  "Diastolic BP",
+    "8478-0":  "Mean BP",
+    "9279-1":  "Respiratory Rate",
+    "8310-5":  "Temperature",
     "59408-5": "SpO2",
+    "2708-6":  "SpO2",       # MIMIC chartevents item 220277 emits this code
     "29463-7": "Weight",
-    "8302-2": "Height",
+    "8302-2":  "Height",
 }
 
 VITAL_ICONS = {
-    "Heart Rate": "fa-heart-pulse",
-    "Systolic BP": "fa-gauge-high",
-    "Diastolic BP": "fa-gauge",
+    "Heart Rate":       "fa-heart-pulse",
+    "Systolic BP":      "fa-gauge-high",
+    "Diastolic BP":     "fa-gauge",
+    "Mean BP":          "fa-gauge",
     "Respiratory Rate": "fa-lungs",
-    "Temperature": "fa-thermometer-half",
-    "SpO2": "fa-percent",
-    "Weight": "fa-weight-scale",
-    "Height": "fa-ruler-vertical",
+    "Temperature":      "fa-thermometer-half",
+    "SpO2":             "fa-percent",
+    "Weight":           "fa-weight-scale",
+    "Height":           "fa-ruler-vertical",
 }
 
 VITAL_NORMAL = {
-    "Heart Rate": (60, 100),
-    "Systolic BP": (90, 140),
-    "Diastolic BP": (60, 90),
+    "Heart Rate":       (60, 100),
+    "Systolic BP":      (90, 140),
+    "Diastolic BP":     (60, 90),
+    "Mean BP":          (70, 100),
     "Respiratory Rate": (12, 20),
-    "Temperature": (97.0, 99.5),
-    "SpO2": (95, 100),
-    "Weight": None,
-    "Height": None,
+    "Temperature":      (97.0, 99.5),
+    "SpO2":             (95, 100),
+    "Weight":           None,
+    "Height":           None,
 }
 
 
@@ -320,8 +325,8 @@ def _encounters(encs: list) -> list:
         locs = e.get("location", [])
         hosp_info = e.get("hospitalization", {})
         exts = {x.get("url"): x for x in e.get("extension", [])}
-        ins = exts.get("insurance", {}).get("valueString", "")
-        los = exts.get("los", {}).get("valueDecimal")
+        ins = exts.get("http://mimic.mit.edu/fhir/StructureDefinition/insurance", {}).get("valueString", "")
+        los = exts.get("http://mimic.mit.edu/fhir/StructureDefinition/los", {}).get("valueDecimal")
 
         row = {
             "id": "urn:uuid:" + e.get("id", ""),
@@ -410,6 +415,71 @@ def _practitioners(pract_list: list) -> dict:
     return result
 
 
+_NOTE_LOINC_LABEL: dict[str, str] = {
+    "18842-5": "Discharge Summary",
+    "18726-0": "Radiology Report",
+    "68604-8": "Radiology Report",
+    "11524-6": "ECG Study",
+    "34750-4": "Echocardiography",
+    "47049-6": "Pharmacy Note",
+    "34109-3": "Note",
+}
+
+_NOTE_CATEGORY: dict[str, str] = {
+    "18842-5": "discharge",
+    "18726-0": "radiology",
+    "68604-8": "radiology",
+}
+
+
+def _notes(doc_refs: list) -> list:
+    out = []
+    for doc in doc_refs:
+        type_obj = doc.get("type", {})
+        codings = type_obj.get("coding", [])
+        loinc_code = next(
+            (c.get("code", "") for c in codings if "loinc" in c.get("system", "").lower()),
+            "",
+        )
+        type_display = (
+            _NOTE_LOINC_LABEL.get(loinc_code)
+            or concept_text(type_obj)
+            or "Note"
+        )
+        category = _NOTE_CATEGORY.get(loinc_code, "other")
+
+        text = ""
+        for content in doc.get("content", []):
+            raw = content.get("attachment", {}).get("data", "")
+            if raw:
+                try:
+                    text = base64.b64decode(raw).decode("utf-8", errors="replace")
+                except Exception:
+                    text = raw
+                break
+
+        ctx = doc.get("context", {})
+        enc_refs = ctx.get("encounter", [])
+        enc_ref = enc_refs[0].get("reference", "") if enc_refs else ""
+        raw_date = doc.get("date", "")
+
+        out.append(
+            {
+                "id": doc.get("id", ""),
+                "typeDisplay": type_display,
+                "loincCode": loinc_code,
+                "category": category,
+                "date": fmt_dt(raw_date),
+                "rawDate": raw_date,
+                "text": text,
+                "preview": text[:300].strip() if text else "",
+                "encounterRef": enc_ref,
+            }
+        )
+    out.sort(key=lambda x: x.get("rawDate") or "", reverse=True)
+    return out
+
+
 def parse_bundle(bundle: dict) -> dict:
     resources: dict[str, list] = {
         "Patient": [],
@@ -422,6 +492,7 @@ def parse_bundle(bundle: dict) -> dict:
         "DiagnosticReport": [],
         "Procedure": [],
         "Practitioner": [],
+        "DocumentReference": [],
     }
 
     for entry in bundle.get("entry", []):
@@ -453,6 +524,8 @@ def parse_bundle(bundle: dict) -> dict:
             resources["Procedure"].append(r)
         elif rt == "Practitioner":
             resources["Practitioner"].append(r)
+        elif rt == "DocumentReference":
+            resources["DocumentReference"].append(r)
 
     patient = resources["Patient"][0] if resources["Patient"] else {}
     raw_encs = resources["Encounter"]
@@ -465,10 +538,14 @@ def parse_bundle(bundle: dict) -> dict:
     labs = _labs(resources["ObsLab"])
     reports = _diagnostic_reports(resources["DiagnosticReport"])
     procs = _procedures(resources["Procedure"])
+    notes = _notes(resources["DocumentReference"])
 
     prac_lookup = _practitioners(resources["Practitioner"])
     vitals_by_enc = _vitals_by_encounter(resources["ObsVital"])
     labs_by_enc = _labs_by_encounter(resources["ObsLab"])
+    notes_by_enc: dict[str, list] = {}
+    for n in notes:
+        notes_by_enc.setdefault(n["encounterRef"], []).append(n)
 
     for enc in encs:
         eid = enc["id"]
@@ -485,6 +562,7 @@ def parse_bundle(bundle: dict) -> dict:
         enc_procs = [p for p in procs if p.get("encounterRef") == eid]
         enc_rpts = [r for r in reports if r.get("encounterRef") == eid]
         enc_labs = labs_by_enc.get(eid, [])
+        enc_notes = notes_by_enc.get(eid, [])
 
         chief_complaint = enc_conds[0]["name"] if enc_conds else None
 
@@ -503,6 +581,7 @@ def parse_bundle(bundle: dict) -> dict:
             "diagnosticReports": enc_rpts,
             "vitals": own_vitals,
             "labs": enc_labs,
+            "notes": enc_notes,
         }
 
     chief = "Not recorded"
@@ -524,5 +603,6 @@ def parse_bundle(bundle: dict) -> dict:
         "diagnosticReports": reports,
         "procedures": procs,
         "encounters": encs,
+        "notes": notes,
         "chiefComplaint": chief,
     }
