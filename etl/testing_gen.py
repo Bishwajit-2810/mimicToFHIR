@@ -32,8 +32,8 @@ from pathlib import Path
 
 from etl.golddata_fhir_gen import convert as _gold_convert
 
-_DEFAULT_DSN = "host=localhost port=5435 dbname=mimiciv user=mimic password=mimic"
-DSN = os.getenv("TESTING_DSN") or _DEFAULT_DSN
+_DEFAULT_DSN = "host=localhost port=5433 dbname=mimiciv user=mimic password=mimic"
+DSN = os.getenv("MIMIC_DSN") or _DEFAULT_DSN
 OUTPUT_DIR = Path(os.getenv("TESTING_OUT", "testing"))
 
 

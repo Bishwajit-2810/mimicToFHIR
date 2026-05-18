@@ -5,6 +5,8 @@ Three output pipelines:
   bundle   → fhir_bundles/          Full data: conditions, meds, notes, vitals, labs
   golddata → golddata_fhir_bundles/ Blind:  no conditions, no meds, no notes
   testing  → testing/               Blind + notes: no conditions, no meds, WITH notes
+
+Use `all` to generate all three from the same random patient sample.
 """
 
 import argparse
@@ -65,6 +67,55 @@ def cmd_testing(args):
         subject_ids=sids,
         random_sample=args.random,
     )
+
+
+def cmd_all(args):
+    """Run all three pipelines on the same randomly selected patients."""
+    import psycopg2
+    import psycopg2.extras
+    from etl.mimic_to_bundle import convert as bundle_convert, DSN, OUTPUT_DIR as BUNDLE_OUT
+    from etl.golddata_fhir_gen import convert as gold_convert, OUTPUT_DIR as GOLD_OUT
+    from etl.testing_gen import convert as test_convert, OUTPUT_DIR as TEST_OUT
+
+    dsn = args.dsn or DSN
+    limit = args.limit if args.limit is not None else 20
+
+    print(f"Selecting {limit} random patients from database...")
+    conn = psycopg2.connect(dsn)
+    conn.set_session(readonly=True, autocommit=True)
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("SELECT subject_id FROM hosp.patients ORDER BY RANDOM() LIMIT %s", (limit,))
+    sids = [r["subject_id"] for r in cur.fetchall()]
+    cur.close()
+    conn.close()
+    print(f"Selected patients: {sids}\n")
+
+    print("=== Step 1/3: Full FHIR bundles ===")
+    bundle_convert(
+        dsn=dsn,
+        output_dir=Path(args.output) / "fhir_bundles" if args.output else BUNDLE_OUT,
+        subject_ids=sids,
+        random_sample=False,
+    )
+
+    print("\n=== Step 2/3: GoldData FHIR bundles ===")
+    gold_convert(
+        dsn=dsn,
+        output_dir=Path(args.output) / "golddata_fhir_bundles" if args.output else GOLD_OUT,
+        include_notes=False,
+        subject_ids=sids,
+        random_sample=False,
+    )
+
+    print("\n=== Step 3/3: Testing FHIR bundles ===")
+    test_convert(
+        dsn=dsn,
+        output_dir=Path(args.output) / "testing" if args.output else TEST_OUT,
+        subject_ids=sids,
+        random_sample=False,
+    )
+
+    print(f"\nAll three pipelines complete. Same {limit} patients across all outputs.")
 
 
 def _add_batch_args(p):
@@ -132,6 +183,15 @@ Pipelines:
     )
     _add_batch_args(p_test)
 
+    # ── all (same patients across all three) ──────────────────────────────────
+    p_all = sub.add_parser(
+        "all",
+        help="Run all three pipelines on the same random patients (recommended)",
+    )
+    p_all.add_argument("--dsn", default=None, help="Override PostgreSQL DSN")
+    p_all.add_argument("--output", default=None, help="Base output directory (creates fhir_bundles/, golddata_fhir_bundles/, testing/ inside)")
+    p_all.add_argument("--limit", type=int, default=20, help="Number of random patients (default: 20)")
+
     args = parser.parse_args()
 
     dispatch = {
@@ -140,6 +200,7 @@ Pipelines:
         "bundle":   cmd_bundle,
         "golddata": cmd_golddata,
         "testing":  cmd_testing,
+        "all":      cmd_all,
     }
     dispatch[args.command](args)
 

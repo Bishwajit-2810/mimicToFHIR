@@ -10,7 +10,6 @@ Environment variables:
 """
 
 import gzip
-import io
 import os
 import sys
 import time
@@ -85,25 +84,45 @@ def wait_for_db(dsn: str, retries: int = 20, delay: float = 3.0) -> psycopg2.ext
 
 
 class _StreamWithHeader:
-    """File-like wrapper that prepends a replacement header then streams the rest."""
+    """File-like wrapper that prepends a replacement header then streams the rest.
+
+    Reads the body one line at a time so the in-memory buffer stays small even
+    for multi-GB uncompressed files.  On a truncated gzip (EOFError), the stream
+    signals clean EOF so COPY commits whatever complete rows were already read.
+    """
 
     def __init__(self, header: str, body):
-        self._prefix = io.StringIO(header)
+        self._buf = header  # starts with just the header line
         self._body = body
-        self._prefix_done = False
+        self._body_done = False
+        self.truncated = False
+
+    def _fill(self, want: int) -> None:
+        while not self._body_done and len(self._buf) < want:
+            try:
+                line = self._body.readline()
+            except EOFError:
+                self.truncated = True
+                self._body_done = True
+                return
+            if not line:
+                self._body_done = True
+                return
+            self._buf += line
 
     def read(self, size=-1):
-        if self._prefix_done:
-            return self._body.read(size)
-        chunk = self._prefix.read(size)
-        if size == -1 or len(chunk) < size:
-            self._prefix_done = True
-            remaining = (-1) if size == -1 else (size - len(chunk))
-            chunk += self._body.read(remaining)
-        return chunk
+        if size == -1:
+            while not self._body_done:
+                self._fill(65536)
+            data, self._buf = self._buf, ""
+            return data
+        self._fill(size)
+        data, self._buf = self._buf[:size], self._buf[size:]
+        return data
 
 
-def load_table(cur, schema: str, table: str, csv_path: Path) -> int:
+def load_table(cur, schema: str, table: str, csv_path: Path) -> tuple[int, bool]:
+    """Returns (row_count, was_truncated)."""
     with gzip.open(csv_path, "rt", encoding="utf-8") as f:
         columns = f.readline().strip().lower()
         stream = _StreamWithHeader(columns + "\n", f)
@@ -111,7 +130,7 @@ def load_table(cur, schema: str, table: str, csv_path: Path) -> int:
             f"COPY {schema}.{table} ({columns}) FROM STDIN WITH (FORMAT CSV, HEADER TRUE, NULL '')",
             stream,
         )
-    return cur.rowcount
+    return cur.rowcount, stream.truncated
 
 
 def main(
@@ -163,9 +182,12 @@ def main(
                 continue
             print(f"  Loading {schema}.{table} ...", end=" ", flush=True)
             try:
-                rows = load_table(cur, schema, table, path)
+                rows, truncated = load_table(cur, schema, table, path)
                 conn.commit()
-                print(f"{rows:,} rows")
+                if truncated:
+                    print(f"{rows:,} rows  WARNING: file truncated, partial data loaded")
+                else:
+                    print(f"{rows:,} rows")
                 total += rows
             except Exception as exc:
                 conn.rollback()

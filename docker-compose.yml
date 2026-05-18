@@ -1,11 +1,8 @@
 services:
 
-  # ── Standard FHIR pipeline database ──────────────────────────────────────
-  # Used by:  python main.py load   →  python main.py bundle
-  # DSN:      host=localhost port=5433 dbname=mimiciv user=mimic password=mimic
-  db_standard:
+  db:
     image: postgres:16
-    container_name: mimic_pg_standard
+    container_name: mimic_pg
     environment:
       POSTGRES_USER:     mimic
       POSTGRES_PASSWORD: mimic
@@ -13,51 +10,7 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - mimic_pgdata_standard:/var/lib/postgresql/data
-      - ./sql:/docker-entrypoint-initdb.d
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mimic -d mimiciv"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  # ── GoldData FHIR pipeline database ──────────────────────────────────────
-  # Used by:  GOLDDATA_DSN="... port=5434 ..." python main.py load
-  #       →   python main.py golddata
-  # DSN:      host=localhost port=5434 dbname=mimiciv user=mimic password=mimic
-  db_golddata:
-    image: postgres:16
-    container_name: mimic_pg_golddata
-    environment:
-      POSTGRES_USER:     mimic
-      POSTGRES_PASSWORD: mimic
-      POSTGRES_DB:       mimiciv
-    ports:
-      - "5434:5432"
-    volumes:
-      - mimic_pgdata_golddata:/var/lib/postgresql/data
-      - ./sql:/docker-entrypoint-initdb.d
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mimic -d mimiciv"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  # ── Testing FHIR pipeline database ───────────────────────────────────────
-  # Used by:  TESTING_DSN="... port=5435 ..." python main.py load
-  #       →   python main.py testing
-  # DSN:      host=localhost port=5435 dbname=mimiciv user=mimic password=mimic
-  db_testing:
-    image: postgres:16
-    container_name: mimic_pg_testing
-    environment:
-      POSTGRES_USER:     mimic
-      POSTGRES_PASSWORD: mimic
-      POSTGRES_DB:       mimiciv
-    ports:
-      - "5435:5432"
-    volumes:
-      - mimic_pgdata_testing:/var/lib/postgresql/data
+      - mimic_pgdata:/var/lib/postgresql/data
       - ./sql:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mimic -d mimiciv"]
@@ -66,6 +19,4 @@ services:
       retries: 10
 
 volumes:
-  mimic_pgdata_standard:
-  mimic_pgdata_golddata:
-  mimic_pgdata_testing:
+  mimic_pgdata:
