@@ -78,17 +78,21 @@ def cmd_all(args):
     from etl.testing_gen import convert as test_convert, OUTPUT_DIR as TEST_OUT
 
     dsn = args.dsn or DSN
-    limit = args.limit if args.limit is not None else 20
 
-    print(f"Selecting {limit} random patients from database...")
-    conn = psycopg2.connect(dsn)
-    conn.set_session(readonly=True, autocommit=True)
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    cur.execute("SELECT subject_id FROM hosp.patients ORDER BY RANDOM() LIMIT %s", (limit,))
-    sids = [r["subject_id"] for r in cur.fetchall()]
-    cur.close()
-    conn.close()
-    print(f"Selected patients: {sids}\n")
+    if args.subject_ids:
+        sids = [int(s.strip()) for s in args.subject_ids.split(",")]
+        print(f"Using {len(sids)} specified patients: {sids}\n")
+    else:
+        limit = args.limit if args.limit is not None else 100
+        print(f"Selecting {limit} random patients from database...")
+        conn = psycopg2.connect(dsn)
+        conn.set_session(readonly=True, autocommit=True)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT subject_id FROM hosp.patients ORDER BY RANDOM() LIMIT %s", (limit,))
+        sids = [r["subject_id"] for r in cur.fetchall()]
+        cur.close()
+        conn.close()
+        print(f"Selected patients: {sids}\n")
 
     print("=== Step 1/3: Full FHIR bundles ===")
     bundle_convert(
@@ -115,7 +119,7 @@ def cmd_all(args):
         random_sample=False,
     )
 
-    print(f"\nAll three pipelines complete. Same {limit} patients across all outputs.")
+    print(f"\nAll three pipelines complete. Same {len(sids)} patients across all outputs.")
 
 
 def _add_batch_args(p):
@@ -190,7 +194,8 @@ Pipelines:
     )
     p_all.add_argument("--dsn", default=None, help="Override PostgreSQL DSN")
     p_all.add_argument("--output", default=None, help="Base output directory (creates fhir_bundles/, golddata_fhir_bundles/, testing/ inside)")
-    p_all.add_argument("--limit", type=int, default=20, help="Number of random patients (default: 20)")
+    p_all.add_argument("--limit", type=int, default=100, help="Number of random patients (default: 100)")
+    p_all.add_argument("--subject-ids", default=None, help="Comma-separated subject_ids; skips random selection")
 
     args = parser.parse_args()
 

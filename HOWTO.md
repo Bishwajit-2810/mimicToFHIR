@@ -48,7 +48,7 @@ docker compose ps    # wait until it shows "healthy"
 # ── Step 2: Load data (once — all pipelines share the same DB) ─────────────
 python main.py load
 
-# ── Step 3: Generate all three bundle sets from the same 20 random patients ─
+# ── Step 3: Generate all three bundle sets from the same 100 random patients ─
 python main.py all
 # Output:
 #   fhir_bundles/              ← Full (conditions + meds + notes)
@@ -101,11 +101,14 @@ to all three generators. This guarantees identical patient cohorts across
 `fhir_bundles/`, `golddata_fhir_bundles/`, and `testing/`.
 
 ```bash
-# Default: 20 random patients
+# Default: 100 random patients
 python main.py all
 
 # Custom count
 python main.py all --limit 50
+
+# Specific patients (skips random selection)
+python main.py all --subject-ids 10000032,10000084
 ```
 
 ---

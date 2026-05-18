@@ -25,7 +25,7 @@ Usage:
     python main.py golddata [options]
 
 Env:
-    GOLDDATA_DSN  — PostgreSQL DSN (falls back to MIMIC_DSN, then built-in default)
+    MIMIC_DSN    — PostgreSQL DSN (default: localhost:5433)
     GOLDDATA_OUT  — output directory (default: golddata_fhir_bundles)
 """
 

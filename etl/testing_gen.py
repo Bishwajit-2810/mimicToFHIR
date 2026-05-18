@@ -15,14 +15,14 @@ What is EXCLUDED (same blind as golddata):
 
 Output: testing/ directory, served by web/testing_app.py on port 8097.
 
-Uses its own database (db_testing, port 5435) separate from golddata (port 5434).
+Shares the same PostgreSQL instance as the Full and GoldData pipelines (port 5433).
 
 Usage:
     python -m etl.testing_gen [--dsn DSN] [--output DIR]
     python main.py testing [options]
 
 Env:
-    TESTING_DSN  — PostgreSQL DSN (default: localhost:5435)
+    MIMIC_DSN    — PostgreSQL DSN (default: localhost:5433)
     TESTING_OUT  — output directory (default: testing)
 """
 
