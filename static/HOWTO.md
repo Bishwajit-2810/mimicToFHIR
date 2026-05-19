@@ -10,18 +10,21 @@ From the project root:
 # Full dashboard — complete clinical data (port 8095)
 uvicorn web.app:app --host 0.0.0.0 --port 8095 --reload
 
-# GoldData dashboard — fully blind: no diagnoses, no medications, no notes (port 8096)
+# GoldData dashboard — latest encounter blinded: no diagnoses, no medications, no notes (port 8096)
 uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
 
-# Testing dashboard — blind + notes: no diagnoses, no medications, WITH notes (port 8097)
+# Testing dashboard — latest encounter blinded + notes restored (port 8097)
 uvicorn web.testing_app:app --host 0.0.0.0 --port 8097 --reload
 ```
 
-| URL                     | Pipeline | Conditions | Medications | Notes |
-| ----------------------- | -------- | :--------: | :---------: | :---: |
-| <http://localhost:8095> | Full     | ✓          | ✓           | ✓     |
-| <http://localhost:8096> | GoldData | ✗          | ✗           | ✗     |
-| <http://localhost:8097> | Testing  | ✗          | ✗           | ✓     |
+| URL                     | Pipeline | Latest Conditions | Latest Meds | Notes |
+| ----------------------- | -------- | :---------------: | :---------: | :---: |
+| <http://localhost:8095> | Full     | ✓                 | ✓           | ✓     |
+| <http://localhost:8096> | GoldData | ✗                 | ✗           | ✗     |
+| <http://localhost:8097> | Testing  | ✗                 | ✗           | ✓     |
+
+**Blinding applies only to the most recent encounter.** Prior encounters always
+include full diagnoses, medications, and notes on all three dashboards.
 
 Press **Ctrl + C** to stop the server.
 
@@ -35,22 +38,22 @@ Press **Ctrl + C** to stop the server.
 A coloured banner appears below the patient info bar on every page. It identifies
 which pipeline is active and shows inclusion chips for each resource type:
 
-- **Blue banner** — Full pipeline (all data)
-- **Amber banner** — GoldData pipeline (vitals/labs/procedures only)
-- **Green banner** — Testing pipeline (vitals/labs/procedures + clinical notes)
+- **Blue banner** — Full pipeline (all data, no blinding)
+- **Amber banner** — GoldData pipeline (latest encounter blinded: vitals/labs/procedures only)
+- **Green banner** — Testing pipeline (latest encounter blinded + clinical notes)
 
-Each chip is green when that resource type is included, or grey with strikethrough
-when it is absent from the bundles. The Conditions and Medications chips will show
-as excluded on the GoldData and Testing dashboards — this is correct and expected.
+Each chip is green when that resource type is included for the latest encounter,
+or grey with strikethrough when excluded. Conditions and Medications chips will
+show as excluded on the GoldData and Testing dashboards — this is correct and
+expected for the most recent visit.
 
 ---
 
 ## Selecting a Patient
 
 The **Select Patient** dropdown in the top-right header lists all available
-patients by their MIMIC-IV subject ID. By default the pipelines load **20 random
-patients** — rerun the generation step to get a different random set. Choose any
-patient to load their record.
+patients by their MIMIC-IV subject ID. By default the pipelines load random
+patients — rerun `python main.py all` to get a different cohort.
 
 The patient info bar shows a quick summary:
 
@@ -96,11 +99,12 @@ blue (normal) or red (out-of-range):
 | Weight           | 29463-7 | —              |
 | Height           | 8302-2  | —              |
 
-**Current Medications** — all `MedicationRequest` resources, deduplicated by drug
-name with dose and route. Shows "No data recorded" on GoldData and Testing dashboards.
+**Current Medications** — all `MedicationRequest` resources for prior encounters,
+deduplicated by drug name with dose and route. Shows "No data recorded" for the
+latest encounter on GoldData and Testing dashboards.
 
 **Past Medical History** — all `Condition` resources with ICD-9/10 codes and
-clinical status. Shows "No data recorded" on GoldData and Testing dashboards.
+clinical status. Latest encounter conditions are excluded on GoldData and Testing.
 
 **Suggested Tests** — microbiology and diagnostic orders from `DiagnosticReport`
 resources, sorted by most recent first.
@@ -119,7 +123,8 @@ The primary reason for the patient's **most recent** hospital encounter.
   discharge disposition, insurance.
 - **Associated Diagnoses** — all conditions linked to that encounter.
 
-Shows "No data recorded" on GoldData and Testing dashboards (conditions excluded).
+Shows "No data recorded" on GoldData and Testing dashboards — the latest
+encounter's conditions are blinded.
 
 ---
 
@@ -127,32 +132,35 @@ Shows "No data recorded" on GoldData and Testing dashboards (conditions excluded
 
 **Suggested Diagnoses** — all `Condition` resources in ICD sequence order.
 Each entry shows the condition name, ICD code, and clinical status badge.
+Latest encounter diagnoses are absent on GoldData and Testing.
 
 **Treatment & Medications** — full medication list with drug name, dose, and route.
+Latest encounter prescriptions are absent on GoldData and Testing.
 
 **Procedures Performed** — all `Procedure` resources with ICD descriptions and dates.
-
-Conditions and Medications sections show "No data recorded" on GoldData and
-Testing dashboards.
+Procedures are always shown on all three dashboards.
 
 ---
 
 ### Tab 4 — Encounters
 
-A timeline of all hospital visits, sorted most-recent first.
+A timeline of all hospital, ICU, and ED visits, sorted most-recent first.
 
 Each **hospital encounter** is a collapsible card. Click the header to expand it.
-
 Expanded view shows admit source, discharge disposition, insurance, and ICU stays.
 
 **ICU stays** appear as nested blue sub-cards inside their parent hospital
 encounter, showing care unit, admission/discharge times, and length of stay.
 
+**ED stays** appear as separate orange cards showing arrival/departure times,
+triage information, and ED vitals.
+
 Each encounter card also contains:
 
 - A vitals summary for that specific encounter
 - Lab results recorded during that encounter
-- Clinical notes (discharge summary + radiology reports) — Testing and Full pipelines only
+- Clinical notes (discharge summary + radiology reports) — shown for prior
+  encounters on all pipelines; for the latest encounter only on Full and Testing
 
 The **Synthesized clinical note** box at the bottom of each encounter card is
 built entirely from the FHIR resources in the bundle (vitals, labs, procedures,
@@ -169,10 +177,12 @@ Full text of all `DocumentReference` resources for the patient:
 - **Discharge Summary** (LOINC 18842-5) — the attending's discharge note
 - **Radiology Report** (LOINC 18726-0) — imaging interpretation notes
 
-Each note shows the encounter date, author (provider ID), and full text. Notes
-are searchable using the **Search notes…** input.
+Each note shows the encounter date, author (provider ID), and full text with
+section-level detail extensions where available. Notes are searchable using the
+**Search notes…** input.
 
-This tab shows "No notes recorded" on the GoldData dashboard (notes excluded).
+This tab shows notes for all prior encounters on all three dashboards. For the
+latest encounter, notes appear on Full and Testing but are excluded on GoldData.
 
 ---
 
@@ -180,12 +190,12 @@ This tab shows "No notes recorded" on the GoldData dashboard (notes excluded).
 
 The dashboard is backed by a FastAPI service you can query directly:
 
-| Endpoint                  | Description                                     |
-| ------------------------- | ----------------------------------------------- |
-| `GET /api/info`           | Dataset metadata and bundle count               |
-| `GET /api/patients`       | List of all patient IDs                         |
-| `GET /api/patients/{id}`  | Full structured clinical data for one patient   |
-| `GET /`                   | Serves the dashboard (index.html)               |
+| Endpoint                 | Description                                   |
+| ------------------------ | --------------------------------------------- |
+| `GET /api/info`          | Dataset metadata and bundle count             |
+| `GET /api/patients`      | List of all patient IDs                       |
+| `GET /api/patients/{id}` | Full structured clinical data for one patient |
+| `GET /`                  | Serves the dashboard (index.html)             |
 
 Example:
 

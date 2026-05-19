@@ -24,6 +24,27 @@ def cmd_load(args):
     )
 
 
+def cmd_reindex(args):
+    import os
+    import psycopg2
+    from etl.load_mimic import DSN as _DSN
+    dsn = args.dsn or os.getenv("MIMIC_DSN") or _DSN
+    sql_path = Path(__file__).parent / "sql" / "02_indexes.sql"
+    sql = sql_path.read_text()
+    print("Creating indexes (this takes 10–30 minutes on the full dataset)...")
+    conn = psycopg2.connect(dsn)
+    conn.autocommit = True
+    cur = conn.cursor()
+    for stmt in [s.strip() for s in sql.split(";") if s.strip() and not s.strip().startswith("--")]:
+        idx_name = stmt.split("idx_")[1].split(" ")[0] if "idx_" in stmt else "?"
+        print(f"  {idx_name} ...", end=" ", flush=True)
+        cur.execute(stmt)
+        print("done")
+    cur.close()
+    conn.close()
+    print("\nAll indexes created. Queries will now be fast.")
+
+
 def cmd_convert(args):
     from etl.mimic_to_fhir import convert, DSN, OUTPUT_DIR
     convert(dsn=args.dsn or DSN, output_dir=Path(args.output) if args.output else OUTPUT_DIR)
@@ -161,6 +182,10 @@ Pipelines:
         help="Comma-separated table names to reload only (e.g. prescriptions,emar_detail)",
     )
 
+    # ── reindex ───────────────────────────────────────────────────────────────
+    p_reindex = sub.add_parser("reindex", help="Create subject_id indexes after loading (run once, makes queries fast)")
+    p_reindex.add_argument("--dsn", default=None)
+
     # ── convert (flat NDJSON) ─────────────────────────────────────────────────
     p_convert = sub.add_parser("convert", help="PostgreSQL → FHIR R4 NDJSON (one file per resource type)")
     p_convert.add_argument("--dsn", default=None)
@@ -201,6 +226,7 @@ Pipelines:
 
     dispatch = {
         "load":     cmd_load,
+        "reindex":  cmd_reindex,
         "convert":  cmd_convert,
         "bundle":   cmd_bundle,
         "golddata": cmd_golddata,
