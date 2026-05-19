@@ -4,21 +4,36 @@ golddata_fhir_gen.py — GoldData FHIR Bundle Generator
 
 Produces one FHIR R4 transaction bundle per patient into golddata_fhir_bundles/.
 
-What is INCLUDED (all encounters):
-    • Encounter  — hospital + ICU (with full discharge disposition)
-    • Observation — vitals (chartevents), labs (labevents), OMR
-    • Procedure   — ICD-coded procedures
-    • DiagnosticReport + microbiology Observations
-    • ICU procedure events (as Observations)
-    • Practitioner + Organization
+Sources: hosp, icu, ed, and note modules (full MIMIC-IV dataset).
 
-What is EXCLUDED (latest encounter only — blinded target):
-    • Condition         (ICD diagnoses for the latest hadm_id only)
-    • MedicationRequest (prescriptions for the latest hadm_id only)
-    • DocumentReference (notes for the latest hadm_id only)
+ALWAYS INCLUDED (all encounters):
+    • Patient, Organization, Practitioner
+    • Encounter          — hospital (hosp.admissions), ICU (icu.icustays),
+                           ED (ed.edstays)
+    • Observation        — ICU vitals (icu.chartevents), labs (hosp.labevents),
+                           OMR (hosp.omr), ICU procedure events (icu.procedureevents),
+                           ICU datetime events (icu.datetimeevents),
+                           ICU output events (icu.outputevents),
+                           ED triage (ed.triage), ED vitalsigns (ed.vitalsign)
+    • Practitioner       — ICU caregivers (icu.datetimeevents / inputevents / outputevents)
+    • Procedure          — ICD-coded procedures (hosp.procedures_icd)
+    • DiagnosticReport   — microbiology (hosp.microbiologyevents)
+    • Claim + ExplanationOfBenefit — DRG-based (hosp.drgcodes)
 
-Prior encounters include Condition, MedicationRequest, and DocumentReference.
-The testing pipeline (testing_gen.py) adds back the latest encounter's notes too.
+INCLUDED FOR PRIOR ENCOUNTERS ONLY (blinded for latest hosp + latest ED stay):
+    • Condition          — hosp ICD diagnoses (hosp.diagnoses_icd),
+                           ED diagnoses (ed.diagnosis)
+    • MedicationRequest  — prescriptions (hosp.prescriptions)
+    • MedicationAdministration — ICU input events (icu.inputevents),
+                                 ICU ingredient events (icu.ingredientevents)
+    • MedicationStatement — ED medication reconciliation (ed.medrecon)
+    • MedicationDispense — ED Pyxis dispenses (ed.pyxis)
+    • DocumentReference  — discharge notes + radiology notes (note.discharge,
+                           note.radiology) with structured detail extensions
+                           (note.discharge_detail, note.radiology_detail)
+
+INCLUDED FOR LATEST ENCOUNTER IN TESTING VARIANT ONLY (include_notes=True):
+    • DocumentReference  — latest encounter discharge + radiology notes
 
 Usage:
     python -m etl.golddata_fhir_gen [--dsn DSN] [--output DIR]
@@ -148,6 +163,81 @@ def convert_patient(
         icu_enc_uids[icu["stay_id"]] = enc["id"]
         add(enc)
 
+    # ── Latest ED stay id — blinded same as latest hospital encounter ────────
+    cur.execute(
+        "SELECT stay_id FROM ed.edstays WHERE subject_id = %s ORDER BY intime DESC LIMIT 1",
+        (subject_id,),
+    )
+    _row = cur.fetchone()
+    latest_ed_stay = _row["stay_id"] if _row else None
+
+    # ── ED encounters ─────────────────────────────────────────────────────────
+    cur.execute(
+        "SELECT * FROM ed.edstays WHERE subject_id = %s ORDER BY intime",
+        (subject_id,),
+    )
+    ed_enc_uids: dict[int, str] = {}
+    for row in cur.fetchall():
+        hosp_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
+        enc = bb.build_encounter_ed(row, patient_uid, hosp_uid)
+        ed_enc_uids[row["stay_id"]] = enc["id"]
+        add(enc)
+
+    # ── ED triage observations (always included — vitals, not diagnosis/treatment) ──
+    cur.execute(
+        "SELECT * FROM ed.triage WHERE subject_id = %s",
+        (subject_id,),
+    )
+    for row in cur.fetchall():
+        enc_uid = ed_enc_uids.get(row["stay_id"])
+        if enc_uid:
+            for obs in bb.build_triage_observations(row, patient_uid, enc_uid):
+                add(obs)
+
+    # ── ED vitalsign observations (always included) ───────────────────────────
+    cur.execute(
+        "SELECT * FROM ed.vitalsign WHERE subject_id = %s ORDER BY stay_id, charttime",
+        (subject_id,),
+    )
+    for row in cur.fetchall():
+        enc_uid = ed_enc_uids.get(row["stay_id"])
+        if enc_uid:
+            for obs in bb.build_ed_vitalsign_observations(row, patient_uid, enc_uid):
+                add(obs)
+
+    # ── ED conditions (prior ED stays only) ───────────────────────────────────
+    if latest_ed_stay is not None:
+        cur.execute(
+            "SELECT * FROM ed.diagnosis WHERE subject_id = %s AND stay_id != %s ORDER BY stay_id, seq_num",
+            (subject_id, latest_ed_stay),
+        )
+        for row in cur.fetchall():
+            enc_uid = ed_enc_uids.get(row["stay_id"])
+            if enc_uid:
+                add(bb.build_ed_condition(row, patient_uid, enc_uid))
+
+    # ── ED medication reconciliation (prior ED stays only) ────────────────────
+    if latest_ed_stay is not None:
+        cur.execute(
+            "SELECT * FROM ed.medrecon WHERE subject_id = %s AND stay_id != %s ORDER BY stay_id, charttime",
+            (subject_id, latest_ed_stay),
+        )
+        for row in cur.fetchall():
+            enc_uid = ed_enc_uids.get(row["stay_id"])
+            if enc_uid:
+                add(bb.build_ed_medrecon(row, patient_uid, enc_uid))
+
+    # ── ED pyxis dispenses (prior ED stays only) ──────────────────────────────
+    if latest_ed_stay is not None:
+        cur.execute(
+            "SELECT * FROM ed.pyxis WHERE subject_id = %s AND stay_id != %s ORDER BY stay_id, charttime",
+            (subject_id, latest_ed_stay),
+        )
+        for row in cur.fetchall():
+            enc_uid = ed_enc_uids.get(row["stay_id"])
+            if enc_uid:
+                add(bb.build_ed_pyxis(row, patient_uid, enc_uid))
+
     # ── CONDITIONS — prior encounters only (latest encounter blinded) ────────
     if latest_hadm is not None:
         cur.execute(
@@ -275,6 +365,89 @@ def convert_patient(
         if enc_uid:
             add(bb.build_icu_procedure_observation(row, patient_uid, enc_uid))
 
+    # ── ICU caregivers (always included — practitioners, no blinding) ─────────
+    cur.execute(
+        """
+        SELECT DISTINCT caregiver_id FROM icu.datetimeevents
+        WHERE subject_id = %s AND caregiver_id IS NOT NULL
+        UNION
+        SELECT DISTINCT caregiver_id FROM icu.inputevents
+        WHERE subject_id = %s AND caregiver_id IS NOT NULL
+        UNION
+        SELECT DISTINCT caregiver_id FROM icu.outputevents
+        WHERE subject_id = %s AND caregiver_id IS NOT NULL
+        """,
+        (subject_id, subject_id, subject_id),
+    )
+    for row in cur.fetchall():
+        add(bb.build_icu_caregiver(row))
+
+    # ── ICU datetime observations (always included — observations, no blinding) ─
+    cur.execute(
+        """
+        SELECT de.*, d.label
+        FROM icu.datetimeevents de
+        LEFT JOIN icu.d_items d ON de.itemid = d.itemid
+        WHERE de.subject_id = %s
+        ORDER BY de.charttime
+        """,
+        (subject_id,),
+    )
+    for row in cur.fetchall():
+        enc_uid = icu_enc_uids.get(row["stay_id"])
+        if enc_uid:
+            add(bb.build_datetime_observation(row, patient_uid, enc_uid))
+
+    # ── ICU output observations (always included — observations, no blinding) ──
+    cur.execute(
+        """
+        SELECT oe.*, d.label
+        FROM icu.outputevents oe
+        LEFT JOIN icu.d_items d ON oe.itemid = d.itemid
+        WHERE oe.subject_id = %s
+        ORDER BY oe.charttime
+        """,
+        (subject_id,),
+    )
+    for row in cur.fetchall():
+        enc_uid = icu_enc_uids.get(row["stay_id"])
+        if enc_uid:
+            add(bb.build_output_observation(row, patient_uid, enc_uid))
+
+    # ── ICU input events (blinded for latest ICU stay — same rule as MedicationRequest) ─
+    if latest_hadm is not None:
+        cur.execute(
+            """
+            SELECT ie.*, d.label
+            FROM icu.inputevents ie
+            LEFT JOIN icu.d_items d ON ie.itemid = d.itemid
+            WHERE ie.subject_id = %s AND ie.hadm_id != %s
+            ORDER BY ie.starttime
+            """,
+            (subject_id, latest_hadm),
+        )
+        for row in cur.fetchall():
+            enc_uid = icu_enc_uids.get(row["stay_id"])
+            if enc_uid:
+                add(bb.build_input_event(row, patient_uid, enc_uid))
+
+    # ── ICU ingredient events (blinded for latest ICU stay — same rule as MedicationRequest) ─
+    if latest_hadm is not None:
+        cur.execute(
+            """
+            SELECT ige.*, d.label
+            FROM icu.ingredientevents ige
+            LEFT JOIN icu.d_items d ON ige.itemid = d.itemid
+            WHERE ige.subject_id = %s AND ige.hadm_id != %s
+            ORDER BY ige.starttime
+            """,
+            (subject_id, latest_hadm),
+        )
+        for row in cur.fetchall():
+            enc_uid = icu_enc_uids.get(row["stay_id"])
+            if enc_uid:
+                add(bb.build_ingredient_event(row, patient_uid, enc_uid))
+
     # ── OMR observations ──────────────────────────────────────────────────────
     cur.execute(
         "SELECT * FROM hosp.omr WHERE subject_id = %s ORDER BY chartdate, seq_num",
@@ -312,7 +485,12 @@ def convert_patient(
         )
         for row in cur.fetchall():
             enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
-            add(bb.build_document_reference(row, patient_uid, enc_uid))
+            cur.execute(
+                "SELECT * FROM note.discharge_detail WHERE note_id = %s ORDER BY field_ordinal",
+                (row["note_id"],),
+            )
+            detail = cur.fetchall()
+            add(bb.build_document_reference(row, patient_uid, enc_uid, detail_rows=list(detail)))
 
         cur.execute(
             """
@@ -325,7 +503,12 @@ def convert_patient(
         )
         for row in cur.fetchall():
             enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
-            add(bb.build_document_reference(row, patient_uid, enc_uid))
+            cur.execute(
+                "SELECT * FROM note.radiology_detail WHERE note_id = %s ORDER BY field_ordinal",
+                (row["note_id"],),
+            )
+            detail = cur.fetchall()
+            add(bb.build_document_reference(row, patient_uid, enc_uid, detail_rows=list(detail)))
 
     # ── Testing variant: also include latest encounter notes ──────────────────
     if include_notes and latest_hadm is not None:
@@ -340,7 +523,12 @@ def convert_patient(
         )
         for row in cur.fetchall():
             enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
-            add(bb.build_document_reference(row, patient_uid, enc_uid))
+            cur.execute(
+                "SELECT * FROM note.discharge_detail WHERE note_id = %s ORDER BY field_ordinal",
+                (row["note_id"],),
+            )
+            detail = cur.fetchall()
+            add(bb.build_document_reference(row, patient_uid, enc_uid, detail_rows=list(detail)))
 
         cur.execute(
             """
@@ -353,7 +541,12 @@ def convert_patient(
         )
         for row in cur.fetchall():
             enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
-            add(bb.build_document_reference(row, patient_uid, enc_uid))
+            cur.execute(
+                "SELECT * FROM note.radiology_detail WHERE note_id = %s ORDER BY field_ordinal",
+                (row["note_id"],),
+            )
+            detail = cur.fetchall()
+            add(bb.build_document_reference(row, patient_uid, enc_uid, detail_rows=list(detail)))
 
     # ── Write bundle ──────────────────────────────────────────────────────────
     bundle = bb.build_bundle(entries, latest_hadm_id=latest_hadm)

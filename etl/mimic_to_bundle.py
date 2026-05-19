@@ -6,6 +6,32 @@ Output: one JSON file per patient in fhir_bundles/<subject_id>.json
 Each file is a FHIR Bundle (type=transaction) whose entries mirror the
 Synthea output format: urn:uuid: fullUrls, POST request entries, and
 all of a patient's resources collected in a single bundle.
+
+Sources
+-------
+hosp.patients           -> Patient
+hosp.admissions         -> Encounter (hospital)
+icu.icustays            -> Encounter (ICU, partOf hospital)
+hosp.diagnoses_icd      -> Condition
+hosp.procedures_icd     -> Procedure
+hosp.labevents          -> Observation (laboratory)
+icu.chartevents         -> Observation (vital-signs / clinical)
+icu.datetimeevents      -> Observation (ICU datetime events)
+icu.outputevents        -> Observation (ICU output events)
+icu.inputevents         -> MedicationAdministration (ICU input events)
+icu.ingredientevents    -> MedicationAdministration (ICU ingredient events)
+icu.caregiver           -> Practitioner (ICU caregivers)
+hosp.prescriptions      -> MedicationRequest
+hosp.omr                -> Observation (survey / outpatient measurements)
+hosp.microbiologyevents -> DiagnosticReport + Observation
+ed.edstays              -> Encounter (ED)
+ed.triage               -> Observation (ED triage vitals + chief complaint + acuity)
+ed.vitalsign            -> Observation (ED vital-signs)
+ed.diagnosis            -> Condition (ED)
+ed.medrecon             -> MedicationStatement (ED medication reconciliation)
+ed.pyxis                -> MedicationDispense (ED pyxis dispenses)
+note.discharge          -> DocumentReference (discharge summaries, with detail)
+note.radiology          -> DocumentReference (radiology notes, with detail)
 """
 
 import json
@@ -574,6 +600,15 @@ _CHART_LOINC: dict[int, str] = {
     226253: "29463-7",
 }
 
+_ED_VITAL_LOINC: dict[str, tuple[str, str, str]] = {
+    "temperature": ("8310-5",  "Temperature",              "Cel"),
+    "heartrate":   ("8867-4",  "Heart Rate",               "/min"),
+    "resprate":    ("9279-1",  "Respiratory Rate",         "/min"),
+    "o2sat":       ("2708-6",  "Oxygen Saturation",        "%"),
+    "sbp":         ("8480-6",  "Systolic Blood Pressure",  "mm[Hg]"),
+    "dbp":         ("8462-4",  "Diastolic Blood Pressure", "mm[Hg]"),
+}
+
 
 def build_lab_observation(row: dict, patient_uid: str, enc_uid: str | None) -> dict:
     uid = _uuid("lab", row["labevent_id"])
@@ -691,6 +726,179 @@ def build_chart_observation(row: dict, patient_uid: str, enc_uid: str) -> dict:
     elif row.get("value"):
         obs["valueString"] = str(row["value"])
     return obs
+
+
+def build_icu_caregiver(row: dict) -> dict:
+    """Build a Practitioner resource from an ICU caregiver row."""
+    uid = _uuid("caregiver", row["caregiver_id"])
+    return {
+        "resourceType": "Practitioner",
+        "id": uid,
+        "identifier": [
+            {
+                "system": "http://mimic.mit.edu/fhir/caregiver",
+                "value": str(row["caregiver_id"]),
+            }
+        ],
+        "active": True,
+    }
+
+
+def build_datetime_observation(row: dict, patient_uid: str, enc_uid: str) -> dict:
+    """Build an Observation for an ICU datetime event."""
+    uid = _uuid("datetime-event", row["stay_id"], row["itemid"], str(row.get("charttime") or ""))
+    obs: dict = {
+        "resourceType": "Observation",
+        "id": uid,
+        "status": "final",
+        "category": [
+            {
+                "coding": [
+                    _coding(
+                        "http://terminology.hl7.org/CodeSystem/observation-category",
+                        "procedure",
+                    )
+                ]
+            }
+        ],
+        "code": {
+            "coding": [
+                _coding(
+                    "http://mimic.mit.edu/fhir/CodeSystem/d-items",
+                    str(row["itemid"]),
+                )
+            ]
+        },
+        "subject": _ref(patient_uid),
+        "encounter": _ref(enc_uid),
+    }
+    if row.get("charttime"):
+        obs["effectiveDateTime"] = _dt(row["charttime"])
+    val = row.get("value")
+    if val is not None:
+        v_str = str(val)
+        try:
+            datetime.fromisoformat(v_str)
+            obs["valueDateTime"] = _dt(val)
+        except (ValueError, TypeError):
+            obs["valueString"] = v_str
+    return obs
+
+
+def build_output_observation(row: dict, patient_uid: str, enc_uid: str) -> dict:
+    """Build an Observation for an ICU output event."""
+    uid = _uuid("output-event", row["stay_id"], row["itemid"], str(row.get("charttime") or ""))
+    obs: dict = {
+        "resourceType": "Observation",
+        "id": uid,
+        "status": "final",
+        "category": [
+            {
+                "coding": [
+                    _coding(
+                        "http://terminology.hl7.org/CodeSystem/observation-category",
+                        "procedure",
+                    )
+                ]
+            }
+        ],
+        "code": {
+            "coding": [
+                _coding(
+                    "http://mimic.mit.edu/fhir/CodeSystem/d-items",
+                    str(row["itemid"]),
+                )
+            ]
+        },
+        "subject": _ref(patient_uid),
+        "encounter": _ref(enc_uid),
+    }
+    if row.get("charttime"):
+        obs["effectiveDateTime"] = _dt(row["charttime"])
+    if row.get("value") is not None:
+        obs["valueQuantity"] = _quantity(
+            float(row["value"]),
+            row.get("valueuom") or None,
+            "http://unitsofmeasure.org",
+        )
+    return obs
+
+
+def build_input_event(row: dict, patient_uid: str, enc_uid: str) -> dict:
+    """Build a MedicationAdministration for an ICU input event."""
+    uid = _uuid("input-event", row["stay_id"], row["orderid"])
+    status = "stopped" if row.get("statusdescription") == "Stopped" else "completed"
+    category_name = row.get("ordercategoryname")
+    r: dict = {
+        "resourceType": "MedicationAdministration",
+        "id": uid,
+        "status": status,
+        "medicationCodeableConcept": {
+            "coding": [
+                _coding(
+                    "http://mimic.mit.edu/fhir/CodeSystem/d-items",
+                    str(row["itemid"]),
+                    category_name,
+                )
+            ],
+            "text": category_name or str(row["itemid"]),
+        },
+        "subject": _ref(patient_uid),
+        "context": _ref(enc_uid),
+    }
+    if row.get("starttime") and row.get("endtime"):
+        r["effectivePeriod"] = {
+            "start": _dt(row["starttime"]),
+            "end": _dt(row["endtime"]),
+        }
+    elif row.get("starttime"):
+        r["effectiveDateTime"] = _dt(row["starttime"])
+    if row.get("amount") is not None:
+        r["dosage"] = {
+            "dose": _quantity(
+                float(row["amount"]),
+                row.get("amountuom") or None,
+                "http://unitsofmeasure.org",
+            )
+        }
+    return r
+
+
+def build_ingredient_event(row: dict, patient_uid: str, enc_uid: str) -> dict:
+    """Build a MedicationAdministration for an ICU ingredient event."""
+    uid = _uuid("ingredient-event", row["stay_id"], row["orderid"], row["itemid"])
+    status = "stopped" if row.get("statusdescription") == "Stopped" else "completed"
+    r: dict = {
+        "resourceType": "MedicationAdministration",
+        "id": uid,
+        "status": status,
+        "medicationCodeableConcept": {
+            "coding": [
+                _coding(
+                    "http://mimic.mit.edu/fhir/CodeSystem/d-items",
+                    str(row["itemid"]),
+                )
+            ]
+        },
+        "subject": _ref(patient_uid),
+        "context": _ref(enc_uid),
+    }
+    if row.get("starttime") and row.get("endtime"):
+        r["effectivePeriod"] = {
+            "start": _dt(row["starttime"]),
+            "end": _dt(row["endtime"]),
+        }
+    elif row.get("starttime"):
+        r["effectiveDateTime"] = _dt(row["starttime"])
+    if row.get("amount") is not None:
+        r["dosage"] = {
+            "dose": _quantity(
+                float(row["amount"]),
+                row.get("amountuom") or None,
+                "http://unitsofmeasure.org",
+            )
+        }
+    return r
 
 
 def build_medication_request(row: dict, patient_uid: str, enc_uid: str) -> dict:
@@ -837,7 +1045,7 @@ _NOTE_TYPE_LOINC: dict[str, tuple[str, str]] = {
     "PH":  ("47049-6", "Pharmacy note"),
 }
 
-def build_document_reference(row: dict, patient_uid: str, enc_uid: str | None) -> dict:
+def build_document_reference(row: dict, patient_uid: str, enc_uid: str | None, detail_rows=None) -> dict:
     import base64
     note_type = (row.get("note_type") or "").upper()
     loinc_code, loinc_display = _NOTE_TYPE_LOINC.get(note_type, ("34109-3", "Note"))
@@ -876,7 +1084,293 @@ def build_document_reference(row: dict, patient_uid: str, enc_uid: str | None) -
         doc["date"] = _dt(row["charttime"])
     if enc_uid:
         doc["context"] = {"encounter": [_ref(enc_uid)]}
+    if detail_rows:
+        doc.setdefault("extension", []).append({
+            "url": "http://mimic.mit.edu/fhir/StructureDefinition/note-detail",
+            "extension": [
+                {"url": r["field_name"], "valueString": str(r["field_value"])}
+                for r in detail_rows
+                if r.get("field_value")
+            ],
+        })
     return doc
+
+
+# ── ED / note builders ────────────────────────────────────────────────────────
+
+
+def build_encounter_ed(row: dict, patient_uid: str, hosp_uid: str | None) -> dict:
+    uid = _uuid("encounter-ed", row["stay_id"])
+    r: dict = {
+        "resourceType": "Encounter",
+        "id": uid,
+        "status": "finished",
+        "class": _coding(
+            "http://terminology.hl7.org/CodeSystem/v3-ActCode", "EMER", "emergency"
+        ),
+        "subject": _ref(patient_uid),
+        "period": {
+            "start": _dt(row["intime"]),
+            **({"end": _dt(row["outtime"])} if row.get("outtime") else {}),
+        },
+    }
+    if hosp_uid is not None:
+        r["partOf"] = _ref(hosp_uid)
+    hosp: dict = {}
+    if row.get("arrival_transport"):
+        hosp["admitSource"] = {"text": row["arrival_transport"]}
+    if row.get("disposition"):
+        hosp["dischargeDisposition"] = {"text": row["disposition"]}
+    if hosp:
+        r["hospitalization"] = hosp
+    return r
+
+
+def build_triage_observations(row: dict, patient_uid: str, enc_uid: str) -> list[dict]:
+    obs_list: list[dict] = []
+
+    def _vital_obs(field_name: str, loinc_code: str, display: str, unit: str, value) -> dict:
+        return {
+            "resourceType": "Observation",
+            "id": _uuid("triage-obs", row["stay_id"], field_name),
+            "status": "final",
+            "category": [
+                {
+                    "coding": [
+                        _coding(
+                            "http://terminology.hl7.org/CodeSystem/observation-category",
+                            "vital-signs",
+                        )
+                    ]
+                }
+            ],
+            "code": {
+                "coding": [_coding("http://loinc.org", loinc_code, display)],
+                "text": display,
+            },
+            "subject": _ref(patient_uid),
+            "encounter": _ref(enc_uid),
+            "valueQuantity": _quantity(float(value), unit, "http://unitsofmeasure.org"),
+        }
+
+    for field_name, (loinc_code, display, unit) in _ED_VITAL_LOINC.items():
+        value = row.get(field_name)
+        if value is not None:
+            obs_list.append(_vital_obs(field_name, loinc_code, display, unit, value))
+
+    if row.get("chiefcomplaint") is not None:
+        obs_list.append({
+            "resourceType": "Observation",
+            "id": _uuid("triage-obs", row["stay_id"], "chiefcomplaint"),
+            "status": "final",
+            "category": [
+                {
+                    "coding": [
+                        _coding(
+                            "http://terminology.hl7.org/CodeSystem/observation-category",
+                            "survey",
+                        )
+                    ]
+                }
+            ],
+            "code": {
+                "coding": [_coding("http://loinc.org", "10154-3", "Chief complaint")],
+                "text": "Chief complaint",
+            },
+            "subject": _ref(patient_uid),
+            "encounter": _ref(enc_uid),
+            "valueString": str(row["chiefcomplaint"]),
+        })
+
+    if row.get("acuity") is not None:
+        obs_list.append({
+            "resourceType": "Observation",
+            "id": _uuid("triage-obs", row["stay_id"], "acuity"),
+            "status": "final",
+            "category": [
+                {
+                    "coding": [
+                        _coding(
+                            "http://terminology.hl7.org/CodeSystem/observation-category",
+                            "survey",
+                        )
+                    ]
+                }
+            ],
+            "code": {"text": "ED Triage Acuity Level"},
+            "subject": _ref(patient_uid),
+            "encounter": _ref(enc_uid),
+            "valueQuantity": {"value": _numeric_value(row["acuity"])},
+        })
+
+    return obs_list
+
+
+def build_ed_vitalsign_observations(row: dict, patient_uid: str, enc_uid: str) -> list[dict]:
+    ts_key = (
+        _dt(row["charttime"]).replace(":", "").replace("-", "").replace("T", "")
+        if row.get("charttime")
+        else "0"
+    )
+    obs_list: list[dict] = []
+
+    def _vital_obs(field_name: str, loinc_code: str, display: str, unit: str, value) -> dict:
+        obs: dict = {
+            "resourceType": "Observation",
+            "id": _uuid("ed-vital", row["stay_id"], field_name, ts_key),
+            "status": "final",
+            "category": [
+                {
+                    "coding": [
+                        _coding(
+                            "http://terminology.hl7.org/CodeSystem/observation-category",
+                            "vital-signs",
+                        )
+                    ]
+                }
+            ],
+            "code": {
+                "coding": [_coding("http://loinc.org", loinc_code, display)],
+                "text": display,
+            },
+            "subject": _ref(patient_uid),
+            "encounter": _ref(enc_uid),
+            "valueQuantity": _quantity(float(value), unit, "http://unitsofmeasure.org"),
+        }
+        if row.get("charttime"):
+            obs["effectiveDateTime"] = _dt(row["charttime"])
+        return obs
+
+    for field_name, (loinc_code, display, unit) in _ED_VITAL_LOINC.items():
+        value = row.get(field_name)
+        if value is not None:
+            obs_list.append(_vital_obs(field_name, loinc_code, display, unit, value))
+
+    if row.get("rhythm") is not None:
+        rhythm_obs: dict = {
+            "resourceType": "Observation",
+            "id": _uuid("ed-vital", row["stay_id"], "rhythm", ts_key),
+            "status": "final",
+            "category": [
+                {
+                    "coding": [
+                        _coding(
+                            "http://terminology.hl7.org/CodeSystem/observation-category",
+                            "vital-signs",
+                        )
+                    ]
+                }
+            ],
+            "code": {"text": "Cardiac Rhythm"},
+            "subject": _ref(patient_uid),
+            "encounter": _ref(enc_uid),
+            "valueString": str(row["rhythm"]),
+        }
+        if row.get("charttime"):
+            rhythm_obs["effectiveDateTime"] = _dt(row["charttime"])
+        obs_list.append(rhythm_obs)
+
+    return obs_list
+
+
+def build_ed_condition(row: dict, patient_uid: str, enc_uid: str) -> dict:
+    uid = _uuid("ed-condition", row["stay_id"], row["seq_num"])
+    return {
+        "resourceType": "Condition",
+        "id": uid,
+        "clinicalStatus": {
+            "coding": [
+                _coding(
+                    "http://terminology.hl7.org/CodeSystem/condition-clinical", "active"
+                )
+            ]
+        },
+        "verificationStatus": {
+            "coding": [
+                _coding(
+                    "http://terminology.hl7.org/CodeSystem/condition-ver-status",
+                    "confirmed",
+                )
+            ]
+        },
+        "category": [
+            {
+                "coding": [
+                    _coding(
+                        "http://terminology.hl7.org/CodeSystem/condition-category",
+                        "encounter-diagnosis",
+                        "Encounter Diagnosis",
+                    )
+                ]
+            }
+        ],
+        "code": {
+            "coding": [
+                _coding(
+                    _icd_system(row["icd_version"]),
+                    row["icd_code"],
+                    row.get("icd_title"),
+                )
+            ],
+            "text": row.get("icd_title") or row["icd_code"],
+        },
+        "subject": _ref(patient_uid),
+        "encounter": _ref(enc_uid),
+    }
+
+
+def build_ed_medrecon(row: dict, patient_uid: str, enc_uid: str) -> dict:
+    uid = _uuid(
+        "ed-medrecon",
+        row["stay_id"],
+        row.get("etc_rn") or 0,
+        row.get("name") or "",
+    )
+    r: dict = {
+        "resourceType": "MedicationStatement",
+        "id": uid,
+        "status": "active",
+        "medicationCodeableConcept": {"text": row.get("name") or ""},
+        "subject": _ref(patient_uid),
+        "context": _ref(enc_uid),
+    }
+    if row.get("ndc"):
+        r["medicationCodeableConcept"]["coding"] = [
+            _coding("http://hl7.org/fhir/sid/ndc", row["ndc"], row.get("name"))
+        ]
+    if row.get("charttime"):
+        r["dateAsserted"] = _dt(row["charttime"])
+    if row.get("etcdescription"):
+        r["note"] = [{"text": row["etcdescription"]}]
+    return r
+
+
+def build_ed_pyxis(row: dict, patient_uid: str, enc_uid: str) -> dict:
+    uid = _uuid(
+        "ed-pyxis",
+        row["stay_id"],
+        row.get("med_rn") or 0,
+        row.get("charttime") or "",
+    )
+    r: dict = {
+        "resourceType": "MedicationDispense",
+        "id": uid,
+        "status": "completed",
+        "medicationCodeableConcept": {"text": row.get("name") or ""},
+        "subject": _ref(patient_uid),
+        "context": _ref(enc_uid),
+    }
+    if row.get("gsn"):
+        r["medicationCodeableConcept"]["coding"] = [
+            _coding(
+                "http://mimic.mit.edu/fhir/CodeSystem/gsn",
+                str(row["gsn"]),
+                row.get("name"),
+            )
+        ]
+    if row.get("charttime"):
+        r["whenHandedOver"] = _dt(row["charttime"])
+    return r
 
 
 # ── claim / explanation-of-benefit builders ──────────────────────────────────
@@ -1302,6 +1796,87 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         if enc_uid:
             add(build_chart_observation(row, patient_uid, enc_uid))
 
+    # ICU caregivers
+    cur.execute(
+        """
+        SELECT DISTINCT caregiver_id FROM icu.datetimeevents
+        WHERE subject_id = %s AND caregiver_id IS NOT NULL
+        UNION
+        SELECT DISTINCT caregiver_id FROM icu.inputevents
+        WHERE subject_id = %s AND caregiver_id IS NOT NULL
+        UNION
+        SELECT DISTINCT caregiver_id FROM icu.outputevents
+        WHERE subject_id = %s AND caregiver_id IS NOT NULL
+        """,
+        (subject_id, subject_id, subject_id),
+    )
+    for row in cur.fetchall():
+        add(build_icu_caregiver(row))
+
+    # ICU datetime observations
+    cur.execute(
+        """
+        SELECT de.*, d.label
+        FROM icu.datetimeevents de
+        LEFT JOIN icu.d_items d ON de.itemid = d.itemid
+        WHERE de.subject_id = %s
+        ORDER BY de.charttime
+        """,
+        (subject_id,),
+    )
+    for row in cur.fetchall():
+        enc_uid = icu_enc_uids.get(row["stay_id"])
+        if enc_uid:
+            add(build_datetime_observation(row, patient_uid, enc_uid))
+
+    # ICU output observations
+    cur.execute(
+        """
+        SELECT oe.*, d.label
+        FROM icu.outputevents oe
+        LEFT JOIN icu.d_items d ON oe.itemid = d.itemid
+        WHERE oe.subject_id = %s
+        ORDER BY oe.charttime
+        """,
+        (subject_id,),
+    )
+    for row in cur.fetchall():
+        enc_uid = icu_enc_uids.get(row["stay_id"])
+        if enc_uid:
+            add(build_output_observation(row, patient_uid, enc_uid))
+
+    # ICU input events (all encounters — no blinding in bundle pipeline)
+    cur.execute(
+        """
+        SELECT ie.*, d.label
+        FROM icu.inputevents ie
+        LEFT JOIN icu.d_items d ON ie.itemid = d.itemid
+        WHERE ie.subject_id = %s
+        ORDER BY ie.starttime
+        """,
+        (subject_id,),
+    )
+    for row in cur.fetchall():
+        enc_uid = icu_enc_uids.get(row["stay_id"])
+        if enc_uid:
+            add(build_input_event(row, patient_uid, enc_uid))
+
+    # ICU ingredient events (all encounters — no blinding in bundle pipeline)
+    cur.execute(
+        """
+        SELECT ige.*, d.label
+        FROM icu.ingredientevents ige
+        LEFT JOIN icu.d_items d ON ige.itemid = d.itemid
+        WHERE ige.subject_id = %s
+        ORDER BY ige.starttime
+        """,
+        (subject_id,),
+    )
+    for row in cur.fetchall():
+        enc_uid = icu_enc_uids.get(row["stay_id"])
+        if enc_uid:
+            add(build_ingredient_event(row, patient_uid, enc_uid))
+
     # Medication requests
     cur.execute(
         "SELECT * FROM hosp.prescriptions WHERE subject_id = %s",
@@ -1340,33 +1915,77 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         for resource in build_diagnostic_report(group_list, patient_uid, enc_uid):
             add(resource)
 
+    # ED encounters
+    cur.execute("SELECT * FROM ed.edstays WHERE subject_id = %s ORDER BY intime", (subject_id,))
+    ed_enc_uids: dict[int, str] = {}
+    for row in cur.fetchall():
+        hosp_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
+        enc = build_encounter_ed(row, patient_uid, hosp_uid)
+        ed_enc_uids[row["stay_id"]] = enc["id"]
+        add(enc)
+
+    # ED triage observations
+    cur.execute("SELECT * FROM ed.triage WHERE subject_id = %s", (subject_id,))
+    for row in cur.fetchall():
+        enc_uid = ed_enc_uids.get(row["stay_id"])
+        if enc_uid:
+            for obs in build_triage_observations(row, patient_uid, enc_uid):
+                add(obs)
+
+    # ED vitalsign observations
+    cur.execute("SELECT * FROM ed.vitalsign WHERE subject_id = %s ORDER BY stay_id, charttime", (subject_id,))
+    for row in cur.fetchall():
+        enc_uid = ed_enc_uids.get(row["stay_id"])
+        if enc_uid:
+            for obs in build_ed_vitalsign_observations(row, patient_uid, enc_uid):
+                add(obs)
+
+    # ED conditions
+    cur.execute("SELECT * FROM ed.diagnosis WHERE subject_id = %s ORDER BY stay_id, seq_num", (subject_id,))
+    for row in cur.fetchall():
+        enc_uid = ed_enc_uids.get(row["stay_id"])
+        if enc_uid:
+            add(build_ed_condition(row, patient_uid, enc_uid))
+
+    # ED medication reconciliation
+    cur.execute("SELECT * FROM ed.medrecon WHERE subject_id = %s ORDER BY stay_id, charttime", (subject_id,))
+    for row in cur.fetchall():
+        enc_uid = ed_enc_uids.get(row["stay_id"])
+        if enc_uid:
+            add(build_ed_medrecon(row, patient_uid, enc_uid))
+
+    # ED pyxis dispenses
+    cur.execute("SELECT * FROM ed.pyxis WHERE subject_id = %s ORDER BY stay_id, charttime", (subject_id,))
+    for row in cur.fetchall():
+        enc_uid = ed_enc_uids.get(row["stay_id"])
+        if enc_uid:
+            add(build_ed_pyxis(row, patient_uid, enc_uid))
+
     # Discharge summaries (MIMIC-IV-Note) — most recent 20 per patient
     cur.execute(
-        """
-        SELECT * FROM note.discharge
-        WHERE subject_id = %s
-        ORDER BY charttime DESC NULLS LAST
-        LIMIT 20
-        """,
+        "SELECT * FROM note.discharge WHERE subject_id = %s ORDER BY charttime DESC NULLS LAST LIMIT 20",
         (subject_id,),
     )
     for row in cur.fetchall():
         enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
-        add(build_document_reference(row, patient_uid, enc_uid))
+        cur2 = cur.connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur2.execute("SELECT * FROM note.discharge_detail WHERE note_id = %s ORDER BY field_ordinal", (row["note_id"],))
+        detail = cur2.fetchall()
+        cur2.close()
+        add(build_document_reference(row, patient_uid, enc_uid, detail_rows=list(detail)))
 
     # Radiology notes (MIMIC-IV-Note) — most recent 20 per patient
     cur.execute(
-        """
-        SELECT * FROM note.radiology
-        WHERE subject_id = %s
-        ORDER BY charttime DESC NULLS LAST
-        LIMIT 20
-        """,
+        "SELECT * FROM note.radiology WHERE subject_id = %s ORDER BY charttime DESC NULLS LAST LIMIT 20",
         (subject_id,),
     )
     for row in cur.fetchall():
         enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
-        add(build_document_reference(row, patient_uid, enc_uid))
+        cur2 = cur.connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur2.execute("SELECT * FROM note.radiology_detail WHERE note_id = %s ORDER BY field_ordinal", (row["note_id"],))
+        detail = cur2.fetchall()
+        cur2.close()
+        add(build_document_reference(row, patient_uid, enc_uid, detail_rows=list(detail)))
 
     bundle = build_bundle(entries)
     out_path = output_dir / f"{subject_id}.json"

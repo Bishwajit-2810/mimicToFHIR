@@ -2,20 +2,33 @@
 """
 testing_gen.py — Testing FHIR Bundle Generator
 
-Identical to the GoldData pipeline PLUS clinical notes (DocumentReference).
+Identical to the GoldData pipeline with one addition: the latest encounter's
+DocumentReference (discharge notes + radiology) is also included.
 
-What is INCLUDED:
-    • Everything from golddata_fhir_gen (encounters, vitals, labs, procedures,
-      microbiology, OMR, ICU events)
-    • DocumentReference — discharge summaries + radiology reports
+INCLUDED (same as golddata — all encounters):
+    • Patient, Organization, Practitioner
+    • Encounter          — hospital, ICU, ED
+    • Observation        — ICU vitals, labs, OMR, ICU procedure events,
+                           ED triage, ED vitalsigns
+    • Procedure          — ICD-coded procedures
+    • DiagnosticReport   — microbiology
+    • Claim + ExplanationOfBenefit
+    • Condition          — hosp + ED diagnoses for all prior encounters
+    • MedicationRequest  — prescriptions for all prior encounters
+    • MedicationStatement — ED medrecon for all prior ED stays
+    • MedicationDispense — ED Pyxis for all prior ED stays
+    • DocumentReference  — notes for all prior encounters (with detail extensions)
 
-What is EXCLUDED (same blind as golddata):
-    • Condition        (ALL ICD diagnoses)
-    • MedicationRequest (ALL prescriptions)
+INCLUDED ADDITIONALLY vs golddata (latest encounter unblinded for notes):
+    • DocumentReference  — latest encounter discharge + radiology notes
+
+EXCLUDED (latest encounter only — blinded target):
+    • Condition          — latest hosp + latest ED diagnoses
+    • MedicationRequest  — latest hosp prescriptions
+    • MedicationStatement — latest ED medrecon
+    • MedicationDispense — latest ED Pyxis dispenses
 
 Output: testing/ directory, served by web/testing_app.py on port 8097.
-
-Shares the same PostgreSQL instance as the Full and GoldData pipelines (port 5433).
 
 Usage:
     python -m etl.testing_gen [--dsn DSN] [--output DIR]
