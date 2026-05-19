@@ -8,9 +8,12 @@ Completely independent from mimic_to_bundle.py:
   - Helpers are duplicated here intentionally so this module never imports from
     the existing pipeline and cannot break it.
 
-EXCLUDED from all golddata/testing bundles (full blind on all encounters):
-  - Condition        (ALL ICD diagnoses)
-  - MedicationRequest (ALL prescriptions)
+EXCLUDED only for the latest encounter (blind target):
+  - Condition        (latest hadm_id diagnoses)
+  - MedicationRequest (latest hadm_id prescriptions)
+
+INCLUDED for all prior encounters:
+  - Condition, MedicationRequest (historical context)
 
 INCLUDED always:
   - Encounter, Observation (vitals/labs/OMR/ICU), Procedure, DiagnosticReport
@@ -39,7 +42,7 @@ BIDMC_NAME = "Beth Israel Deaconess Medical Center"
 _GOLDDATA_TAG = {
     "system": "http://mimic.mit.edu/fhir/tag/pipeline",
     "code": "golddata_fhir",
-    "display": "GoldData FHIR — all diagnoses & treatments excluded",
+    "display": "GoldData FHIR — latest encounter diagnoses & treatments excluded",
 }
 
 
@@ -511,6 +514,112 @@ def build_procedure(row: dict, patient_uid: str, enc_uid: str) -> dict:
             {"performedDateTime": _dt(row["chartdate"])} if row.get("chartdate") else {}
         ),
     }
+
+
+def build_condition(row: dict, patient_uid: str, enc_uid: str) -> dict:
+    uid = _uuid("condition", row["hadm_id"], row["seq_num"])
+    return {
+        "resourceType": "Condition",
+        "id": uid,
+        "meta": _meta(),
+        "clinicalStatus": {
+            "coding": [
+                _coding(
+                    "http://terminology.hl7.org/CodeSystem/condition-clinical", "active"
+                )
+            ]
+        },
+        "verificationStatus": {
+            "coding": [
+                _coding(
+                    "http://terminology.hl7.org/CodeSystem/condition-ver-status",
+                    "confirmed",
+                )
+            ]
+        },
+        "category": [
+            {
+                "coding": [
+                    _coding(
+                        "http://terminology.hl7.org/CodeSystem/condition-category",
+                        "encounter-diagnosis",
+                        "Encounter Diagnosis",
+                    )
+                ]
+            }
+        ],
+        "code": {
+            "coding": [
+                _coding(
+                    _icd_system(row["icd_version"]),
+                    row["icd_code"],
+                    row.get("long_title"),
+                )
+            ],
+            "text": row.get("long_title") or row["icd_code"],
+        },
+        "subject": _ref(patient_uid),
+        "encounter": _ref(enc_uid),
+        **({"onsetDateTime": _dt(row.get("admittime"))} if row.get("admittime") else {}),
+        **({"recordedDate": _dt(row.get("admittime"))} if row.get("admittime") else {}),
+    }
+
+
+def _dose_and_rate(dose_value: Any, dose_unit: str | None) -> dict | None:
+    if dose_value is None or not dose_unit:
+        return None
+    if isinstance(dose_value, str):
+        dose_value = dose_value.strip()
+        if not dose_value:
+            return None
+    try:
+        return {
+            "doseQuantity": _quantity(
+                float(dose_value), dose_unit, "http://unitsofmeasure.org"
+            )
+        }
+    except (ValueError, TypeError):
+        return {"doseQuantity": {"unit": dose_unit, "value": str(dose_value)}}
+
+
+def build_medication_request(row: dict, patient_uid: str, enc_uid: str) -> dict:
+    uid = _uuid(
+        "rx",
+        row["subject_id"],
+        row["hadm_id"],
+        row.get("pharmacy_id") or row.get("poe_id") or row.get("starttime"),
+        row.get("drug") or "",
+    )
+    r: dict = {
+        "resourceType": "MedicationRequest",
+        "id": uid,
+        "meta": _meta(),
+        "status": "completed",
+        "intent": "order",
+        "medicationCodeableConcept": {"text": row.get("drug") or "Unknown"},
+        "subject": _ref(patient_uid),
+        "encounter": _ref(enc_uid),
+    }
+    if row.get("ndc"):
+        r["medicationCodeableConcept"]["coding"] = [
+            _coding("http://hl7.org/fhir/sid/ndc", row["ndc"], row.get("drug"))
+        ]
+    dosage: dict = {}
+    dose_and_rate = _dose_and_rate(row.get("dose_val_rx"), row.get("dose_unit_rx"))
+    if dose_and_rate:
+        dosage["doseAndRate"] = [dose_and_rate]
+    if row.get("route"):
+        dosage["route"] = {"text": row["route"]}
+    if dosage:
+        r["dosageInstruction"] = [dosage]
+    timing: dict = {}
+    if row.get("starttime"):
+        timing["start"] = _dt(row["starttime"])
+    if row.get("stoptime"):
+        timing["end"] = _dt(row["stoptime"])
+    if timing:
+        r["dispenseRequest"] = {"validityPeriod": timing}
+    return r
 
 
 def build_lab_observation(row: dict, patient_uid: str, enc_uid: str | None) -> dict:

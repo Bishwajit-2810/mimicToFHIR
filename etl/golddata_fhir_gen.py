@@ -12,13 +12,13 @@ What is INCLUDED (all encounters):
     • ICU procedure events (as Observations)
     • Practitioner + Organization
 
-What is EXCLUDED (full blind — no diagnosis or treatment leakage):
-    • Condition        (ALL ICD diagnoses, all encounters)
-    • MedicationRequest (ALL prescriptions, all encounters)
-    • DocumentReference (clinical notes — see testing_gen.py for the +notes variant)
+What is EXCLUDED (latest encounter only — blinded target):
+    • Condition         (ICD diagnoses for the latest hadm_id only)
+    • MedicationRequest (prescriptions for the latest hadm_id only)
+    • DocumentReference (notes for the latest hadm_id only)
 
-The testing pipeline (testing_gen.py) adds DocumentReference back but keeps
-Condition and MedicationRequest excluded.
+Prior encounters include Condition, MedicationRequest, and DocumentReference.
+The testing pipeline (testing_gen.py) adds back the latest encounter's notes too.
 
 Usage:
     python -m etl.golddata_fhir_gen [--dsn DSN] [--output DIR]
@@ -148,11 +148,39 @@ def convert_patient(
         icu_enc_uids[icu["stay_id"]] = enc["id"]
         add(enc)
 
-    # ── CONDITIONS — excluded entirely ───────────────────────────────────────
-    # (intentional: no diagnosis leakage in gold/testing pipelines)
+    # ── CONDITIONS — prior encounters only (latest encounter blinded) ────────
+    if latest_hadm is not None:
+        cur.execute(
+            """
+            SELECT d.*, a.admittime, i.long_title
+            FROM hosp.diagnoses_icd d
+            LEFT JOIN hosp.admissions a ON d.hadm_id = a.hadm_id
+            LEFT JOIN hosp.d_icd_diagnoses i
+                   ON d.icd_code = i.icd_code AND d.icd_version = i.icd_version
+            WHERE d.subject_id = %s AND d.hadm_id != %s
+            ORDER BY d.hadm_id, d.seq_num
+            """,
+            (subject_id, latest_hadm),
+        )
+        for row in cur.fetchall():
+            enc_uid = hosp_enc_uids.get(row["hadm_id"])
+            if enc_uid:
+                add(bb.build_condition(row, patient_uid, enc_uid))
 
-    # ── MEDICATIONS — excluded entirely ──────────────────────────────────────
-    # (intentional: no treatment leakage in gold/testing pipelines)
+    # ── MEDICATIONS — prior encounters only (latest encounter blinded) ────────
+    if latest_hadm is not None:
+        cur.execute(
+            """
+            SELECT * FROM hosp.prescriptions
+            WHERE subject_id = %s AND hadm_id != %s
+            ORDER BY hadm_id, starttime
+            """,
+            (subject_id, latest_hadm),
+        )
+        for row in cur.fetchall():
+            enc_uid = hosp_enc_uids.get(row["hadm_id"])
+            if enc_uid:
+                add(bb.build_medication_request(row, patient_uid, enc_uid))
 
     # ── DRG codes per admission (used for Claim line items only) ─────────────
     cur.execute(
@@ -271,16 +299,16 @@ def convert_patient(
         for resource in bb.build_diagnostic_report(group_list, patient_uid, enc_uid):
             add(resource)
 
-    # ── Clinical notes — only in testing variant ──────────────────────────────
-    if include_notes:
+    # ── Clinical notes — prior encounters always included, latest encounter blinded ──
+    if latest_hadm is not None:
         cur.execute(
             """
             SELECT * FROM note.discharge
-            WHERE subject_id = %s
+            WHERE subject_id = %s AND hadm_id != %s
             ORDER BY charttime DESC NULLS LAST
             LIMIT 20
             """,
-            (subject_id,),
+            (subject_id, latest_hadm),
         )
         for row in cur.fetchall():
             enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
@@ -289,11 +317,39 @@ def convert_patient(
         cur.execute(
             """
             SELECT * FROM note.radiology
-            WHERE subject_id = %s
+            WHERE subject_id = %s AND hadm_id != %s
             ORDER BY charttime DESC NULLS LAST
             LIMIT 20
             """,
-            (subject_id,),
+            (subject_id, latest_hadm),
+        )
+        for row in cur.fetchall():
+            enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
+            add(bb.build_document_reference(row, patient_uid, enc_uid))
+
+    # ── Testing variant: also include latest encounter notes ──────────────────
+    if include_notes and latest_hadm is not None:
+        cur.execute(
+            """
+            SELECT * FROM note.discharge
+            WHERE subject_id = %s AND hadm_id = %s
+            ORDER BY charttime DESC NULLS LAST
+            LIMIT 20
+            """,
+            (subject_id, latest_hadm),
+        )
+        for row in cur.fetchall():
+            enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
+            add(bb.build_document_reference(row, patient_uid, enc_uid))
+
+        cur.execute(
+            """
+            SELECT * FROM note.radiology
+            WHERE subject_id = %s AND hadm_id = %s
+            ORDER BY charttime DESC NULLS LAST
+            LIMIT 20
+            """,
+            (subject_id, latest_hadm),
         )
         for row in cur.fetchall():
             enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
@@ -324,8 +380,8 @@ def convert(
     print(f"{variant} FHIR Generator")
     print(f"  DSN    : {dsn}")
     print(f"  Output : {output_dir.resolve()}/")
-    print(f"  Mode   : Conditions + Medications excluded from all encounters")
-    print(f"  Notes  : {'included' if include_notes else 'excluded'}\n")
+    print(f"  Mode   : Conditions + Medications excluded for latest encounter only")
+    print(f"  Notes  : prior encounters always included; latest {'included' if include_notes else 'excluded'}\n")
 
     conn = psycopg2.connect(dsn)
     conn.set_session(readonly=True, autocommit=True)

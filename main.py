@@ -83,7 +83,7 @@ def cmd_all(args):
         sids = [int(s.strip()) for s in args.subject_ids.split(",")]
         print(f"Using {len(sids)} specified patients: {sids}\n")
     else:
-        limit = args.limit if args.limit is not None else 100
+        limit = args.limit if args.limit is not None else 5
         print(f"Selecting {limit} random patients from database...")
         conn = psycopg2.connect(dsn)
         conn.set_session(readonly=True, autocommit=True)
@@ -194,7 +194,7 @@ Pipelines:
     )
     p_all.add_argument("--dsn", default=None, help="Override PostgreSQL DSN")
     p_all.add_argument("--output", default=None, help="Base output directory (creates fhir_bundles/, golddata_fhir_bundles/, testing/ inside)")
-    p_all.add_argument("--limit", type=int, default=100, help="Number of random patients (default: 100)")
+    p_all.add_argument("--limit", type=int, default=5, help="Number of random patients (default: 5)")
     p_all.add_argument("--subject-ids", default=None, help="Comma-separated subject_ids; skips random selection")
 
     args = parser.parse_args()
