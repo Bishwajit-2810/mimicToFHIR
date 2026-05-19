@@ -4,6 +4,7 @@
 CREATE SCHEMA IF NOT EXISTS hosp;
 CREATE SCHEMA IF NOT EXISTS icu;
 CREATE SCHEMA IF NOT EXISTS note;
+CREATE SCHEMA IF NOT EXISTS ed;
 
 -- ============================================================
 -- HOSP MODULE
@@ -493,4 +494,100 @@ CREATE TABLE note.radiology (
     storetime  TIMESTAMP,
     text       TEXT,
     PRIMARY KEY (note_id)
+);
+
+-- ============================================================
+-- NOTE DETAIL TABLES
+-- ============================================================
+
+CREATE TABLE note.discharge_detail (
+    note_id       VARCHAR(25) NOT NULL,
+    subject_id    INTEGER NOT NULL,
+    field_name    VARCHAR(255),
+    field_value   TEXT,
+    field_ordinal SMALLINT
+);
+
+CREATE TABLE note.radiology_detail (
+    note_id       VARCHAR(25) NOT NULL,
+    subject_id    INTEGER NOT NULL,
+    field_name    VARCHAR(255),
+    field_value   TEXT,
+    field_ordinal SMALLINT
+);
+
+-- ============================================================
+-- ED MODULE
+-- ============================================================
+
+CREATE TABLE ed.edstays (
+    subject_id         INTEGER NOT NULL,
+    hadm_id            INTEGER,
+    stay_id            INTEGER NOT NULL,
+    intime             TIMESTAMP,
+    outtime            TIMESTAMP,
+    gender             VARCHAR(1),
+    race               VARCHAR(60),
+    arrival_transport  VARCHAR(50),
+    disposition        VARCHAR(50),
+    PRIMARY KEY (stay_id)
+);
+
+CREATE TABLE ed.diagnosis (
+    subject_id  INTEGER NOT NULL,
+    stay_id     INTEGER NOT NULL,
+    seq_num     SMALLINT NOT NULL,
+    icd_code    VARCHAR(10),
+    icd_version SMALLINT,
+    icd_title   TEXT
+);
+
+CREATE TABLE ed.medrecon (
+    subject_id     INTEGER NOT NULL,
+    stay_id        INTEGER NOT NULL,
+    charttime      TIMESTAMP,
+    name           TEXT,
+    gsn            VARCHAR(10),
+    ndc            VARCHAR(12),
+    etc_rn         SMALLINT,
+    etccode        VARCHAR(10),
+    etcdescription TEXT
+);
+
+CREATE TABLE ed.pyxis (
+    subject_id INTEGER NOT NULL,
+    stay_id    INTEGER NOT NULL,
+    charttime  TIMESTAMP,
+    med_rn     SMALLINT,
+    name       TEXT,
+    gsn_rn     SMALLINT,
+    gsn        VARCHAR(10)
+);
+
+CREATE TABLE ed.triage (
+    subject_id     INTEGER NOT NULL,
+    stay_id        INTEGER NOT NULL,
+    temperature    DOUBLE PRECISION,
+    heartrate      DOUBLE PRECISION,
+    resprate       DOUBLE PRECISION,
+    o2sat          DOUBLE PRECISION,
+    sbp            DOUBLE PRECISION,
+    dbp            DOUBLE PRECISION,
+    pain           TEXT,
+    acuity         DOUBLE PRECISION,
+    chiefcomplaint TEXT
+);
+
+CREATE TABLE ed.vitalsign (
+    subject_id  INTEGER NOT NULL,
+    stay_id     INTEGER NOT NULL,
+    charttime   TIMESTAMP,
+    temperature DOUBLE PRECISION,
+    heartrate   DOUBLE PRECISION,
+    resprate    DOUBLE PRECISION,
+    o2sat       DOUBLE PRECISION,
+    sbp         DOUBLE PRECISION,
+    dbp         DOUBLE PRECISION,
+    rhythm      TEXT,
+    pain        TEXT
 );

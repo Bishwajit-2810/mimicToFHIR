@@ -17,6 +17,7 @@ from pathlib import Path
 
 import psycopg2
 
+
 DSN = os.getenv("MIMIC_DSN", "host=localhost port=5433 dbname=mimiciv user=mimic password=mimic")
 
 # Default data dir: dataset/ inside the project root
@@ -66,7 +67,16 @@ TABLES = [
     ("icu",  "procedureevents",    DATA_DIR / "icu/procedureevents.csv.gz"),
     # note (MIMIC-IV-Note v2.2 — skipped if MIMIC_NOTE_DIR not set or missing)
     ("note", "discharge",          NOTE_DIR / "discharge.csv.gz"),
+    ("note", "discharge_detail",   NOTE_DIR / "discharge_detail.csv.gz"),
     ("note", "radiology",          NOTE_DIR / "radiology.csv.gz"),
+    ("note", "radiology_detail",   NOTE_DIR / "radiology_detail.csv.gz"),
+    # ed (MIMIC-IV-ED — skipped if missing)
+    ("ed",   "edstays",            DATA_DIR / "ed/edstays.csv.gz"),
+    ("ed",   "diagnosis",          DATA_DIR / "ed/diagnosis.csv.gz"),
+    ("ed",   "medrecon",           DATA_DIR / "ed/medrecon.csv.gz"),
+    ("ed",   "pyxis",              DATA_DIR / "ed/pyxis.csv.gz"),
+    ("ed",   "triage",             DATA_DIR / "ed/triage.csv.gz"),
+    ("ed",   "vitalsign",          DATA_DIR / "ed/vitalsign.csv.gz"),
 ]
 
 
@@ -159,48 +169,63 @@ def main(
 
     conn = wait_for_db(effective_dsn)
     conn.autocommit = False
+    cur = conn.cursor()
+
+    print("Truncating selected table(s)..." if only_tables else "Truncating existing data...")
+    for schema, table, _ in reversed(tables):
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema=%s AND table_name=%s",
+            (schema, table),
+        )
+        if cur.fetchone():
+            cur.execute(f"TRUNCATE TABLE {schema}.{table} CASCADE")
+    conn.commit()
 
     total = 0
-    with conn:
-        cur = conn.cursor()
+    errors: list[str] = []
 
-        print("Truncating selected table(s)..." if only_tables else "Truncating existing data...")
-        for schema, table, _ in reversed(tables):
-            cur.execute(
-                "SELECT 1 FROM information_schema.tables "
-                "WHERE table_schema=%s AND table_name=%s",
-                (schema, table),
-            )
-            if cur.fetchone():
-                cur.execute(f"TRUNCATE TABLE {schema}.{table} CASCADE")
-        conn.commit()
-
-        errors: list[str] = []
-        for schema, table, path in tables:
-            if not path.exists():
-                print(f"  SKIP  {schema}.{table} — file not found: {path}")
-                continue
-            print(f"  Loading {schema}.{table} ...", end=" ", flush=True)
+    for schema, table, path in tables:
+        if not path.exists():
+            print(f"  SKIP  {schema}.{table} — file not found: {path}")
+            continue
+        print(f"  Loading {schema}.{table} ...", end=" ", flush=True)
+        try:
+            rows, truncated = load_table(cur, schema, table, path)
+            conn.commit()
+            if truncated:
+                print(f"{rows:,} rows  WARNING: file truncated, partial data loaded")
+            else:
+                print(f"{rows:,} rows")
+            total += rows
+        except Exception as exc:
+            msg = str(exc).splitlines()[0]
+            print(f"ERROR — {msg}")
+            errors.append(f"{schema}.{table}: {msg}")
+            # Connection may be dead (server OOM-killed mid-COPY) — reconnect
             try:
-                rows, truncated = load_table(cur, schema, table, path)
-                conn.commit()
-                if truncated:
-                    print(f"{rows:,} rows  WARNING: file truncated, partial data loaded")
-                else:
-                    print(f"{rows:,} rows")
-                total += rows
-            except Exception as exc:
                 conn.rollback()
-                msg = str(exc).splitlines()[0]
-                print(f"ERROR — {msg}")
-                errors.append(f"{schema}.{table}: {msg}")
+            except Exception:
+                pass
+            try:
+                conn.close()
+            except Exception:
+                pass
+            print("  Reconnecting to database...")
+            conn = wait_for_db(effective_dsn)
+            conn.autocommit = False
+            cur = conn.cursor()
+
+    try:
+        conn.close()
+    except Exception:
+        pass
 
     print(f"\nDone. {total:,} total rows loaded.")
     if errors:
         print(f"\n{len(errors)} table(s) failed to load:")
         for e in errors:
             print(f"  ✗ {e}")
-    conn.close()
 
 
 if __name__ == "__main__":
