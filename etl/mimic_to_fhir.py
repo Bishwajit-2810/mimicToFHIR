@@ -52,7 +52,7 @@ OUTPUT_DIR = Path("fhir_output")
 
 # Stable UUID namespace so resource IDs are UUID-shaped but still reproducible.
 _NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
-_RANGE_RE = re.compile(r"^(\d*\.?\d+)-(\d*\.?\d+)$")
+_RANGE_RE = re.compile(r"^(\d*\.?\d+)\s*-\s*(\d*\.?\d+)$")
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -72,21 +72,29 @@ def _uuid(*keys) -> str:
     return str(uuid.uuid5(_NS, "mimic-iv::" + "::".join(str(k) for k in keys)))
 
 
-def _numeric_value(value: Any) -> int | float | Any:
+def _numeric_value(value: Any) -> int | float | None:
+    if isinstance(value, (int, float)):
+        return value
     if isinstance(value, str):
         stripped = value.strip()
         if not stripped:
-            return value
+            return None
+        # MIMIC dose strings like "25,000" use comma as a thousands separator;
+        # FHIR's `decimal` type forbids it, so HAPI rejects the whole bundle.
+        cleaned = stripped.replace(",", "")
         try:
-            number = float(stripped)
+            number = float(cleaned)
         except ValueError:
-            return value
+            return None
         return int(number) if number.is_integer() else number
-    return value
+    return None
 
 
 def _quantity(value: Any, unit: str | None = None, system: str | None = None) -> dict:
-    quantity: dict[str, Any] = {"value": _numeric_value(value)}
+    quantity: dict[str, Any] = {}
+    numeric = _numeric_value(value)
+    if numeric is not None:
+        quantity["value"] = numeric
     if unit:
         quantity["unit"] = unit
     if system:

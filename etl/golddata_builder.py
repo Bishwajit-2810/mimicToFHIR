@@ -40,9 +40,12 @@ Called exclusively by golddata_fhir_gen.py.
 
 import base64
 import math
+import re
 import uuid
 from datetime import date, datetime
 from typing import Any
+
+_RANGE_RE = re.compile(r"^(\d*\.?\d+)\s*-\s*(\d*\.?\d+)$")
 
 # ── UUID namespace — distinct from standard pipeline's namespace ───────────────
 # Standard pipeline uses: 6ba7b810-9dad-11d1-80b4-00c04fd430c8 (DNS root)
@@ -68,21 +71,29 @@ def _uuid(*keys: Any) -> str:
     return str(uuid.uuid5(_NS, "golddata::" + "::".join(str(k) for k in keys)))
 
 
-def _numeric_value(value: Any) -> int | float | Any:
+def _numeric_value(value: Any) -> int | float | None:
+    if isinstance(value, (int, float)):
+        return value
     if isinstance(value, str):
         stripped = value.strip()
         if not stripped:
-            return value
+            return None
+        # MIMIC dose strings like "25,000" use comma as a thousands separator;
+        # FHIR's `decimal` type forbids it, so HAPI rejects the whole bundle.
+        cleaned = stripped.replace(",", "")
         try:
-            number = float(stripped)
+            number = float(cleaned)
         except ValueError:
-            return value
+            return None
         return int(number) if number.is_integer() else number
-    return value
+    return None
 
 
 def _quantity(value: Any, unit: str | None = None, system: str | None = None) -> dict:
-    q: dict[str, Any] = {"value": _numeric_value(value)}
+    q: dict[str, Any] = {}
+    numeric = _numeric_value(value)
+    if numeric is not None:
+        q["value"] = numeric
     if unit:
         q["unit"] = unit
     if system:
@@ -605,17 +616,26 @@ def _dose_and_rate(dose_value: Any, dose_unit: str | None) -> dict | None:
     if dose_value is None or not dose_unit:
         return None
     if isinstance(dose_value, str):
-        dose_value = dose_value.strip()
-        if not dose_value:
+        stripped = dose_value.strip()
+        if not stripped:
             return None
-    try:
-        return {
-            "doseQuantity": _quantity(
-                float(dose_value), dose_unit, "http://unitsofmeasure.org"
-            )
-        }
-    except (ValueError, TypeError):
-        return {"doseQuantity": {"unit": dose_unit, "value": str(dose_value)}}
+        # MIMIC dose strings like "5-10" or "0.5 -1" are ranges — emit doseRange.
+        range_match = _RANGE_RE.match(stripped)
+        if range_match:
+            return {
+                "doseRange": {
+                    "low": _quantity(
+                        range_match.group(1), dose_unit, "http://unitsofmeasure.org"
+                    ),
+                    "high": _quantity(
+                        range_match.group(2), dose_unit, "http://unitsofmeasure.org"
+                    ),
+                }
+            }
+        dose_value = stripped
+    return {
+        "doseQuantity": _quantity(dose_value, dose_unit, "http://unitsofmeasure.org")
+    }
 
 
 def build_medication_request(row: dict, patient_uid: str, enc_uid: str) -> dict:
