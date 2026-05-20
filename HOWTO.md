@@ -5,28 +5,28 @@
 ```text
 ┌────────────────────────────────────────────────────────────────────┐
 │  Single PostgreSQL container: mimic_pg  (port 5433)                │
-│  Shared by all three pipelines — load data once                    │
+│  Shared by both pipelines — load data once                         │
 │  Schemas: hosp (22 tables) · icu (9) · ed (6) · note (4)          │
 └────────────────────────────────────────────────────────────────────┘
-         │                    │                    │
-         ▼                    ▼                    ▼
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│  Full Pipeline  │  │ GoldData Pipeline│  │Testing Pipeline │
-│  fhir_bundles/  │  │golddata_fhir_   │  │  testing/       │
-│  port 8095      │  │bundles/         │  │  port 8097      │
-│                 │  │port 8096        │  │                 │
-│  All encounters │  │Prior encounters │  │Prior encounters │
-│  Conditions  ✓  │  │Conditions  ✓    │  │Conditions  ✓    │
-│  Medications ✓  │  │Medications ✓    │  │Medications ✓    │
-│  Notes       ✓  │  │Notes       ✓    │  │Notes       ✓    │
-│                 │  │                 │  │                 │
-│  Latest encounter│  │Latest encounter │  │Latest encounter │
-│  Conditions  ✓  │  │Conditions  ✗    │  │Conditions  ✗    │
-│  Procedures  ✓  │  │Procedures  ✗    │  │Procedures  ✗    │
-│  Medications ✓  │  │Medications ✗    │  │Medications ✗    │
-│  Notes       ✓  │  │Notes       ✗    │  │Notes       ✓    │
-│  Vitals/Labs ✓  │  │Vitals/Labs ✓    │  │Vitals/Labs ✓    │
-└─────────────────┘  └─────────────────┘  └─────────────────┘
+                   │                    │
+                   ▼                    ▼
+        ┌─────────────────┐  ┌─────────────────┐
+        │  Full Pipeline  │  │ GoldData Pipeline│
+        │  fhir_bundles/  │  │golddata_fhir_   │
+        │  port 8095      │  │bundles/         │
+        │                 │  │port 8096        │
+        │  All encounters │  │Prior encounters │
+        │  Conditions  ✓  │  │Conditions  ✓    │
+        │  Medications ✓  │  │Medications ✓    │
+        │  Notes       ✓  │  │Notes       ✓    │
+        │                 │  │                 │
+        │  Latest encounter│  │Latest encounter │
+        │  Conditions  ✓  │  │Conditions  ✗    │
+        │  Procedures  ✓  │  │Procedures  ✗    │
+        │  Medications ✓  │  │Medications ✗    │
+        │  Notes       ✓  │  │Notes       ✗    │
+        │  Vitals/Labs ✓  │  │Vitals/Labs ✓    │
+        └─────────────────┘  └─────────────────┘
 ```
 
 **Blinding applies only to the most recent encounter** — the latest hospital
@@ -52,31 +52,28 @@ encounters retain their full data including diagnoses and medications.
 docker compose up -d
 docker compose ps    # wait until it shows "healthy"
 
-# ── Step 2: Load data (once — all pipelines share the same DB) ─────────────
+# ── Step 2: Load data (once — both pipelines share the same DB) ────────────
 python main.py load
 
 # ── Step 3: Create indexes (required for fast queries) ─────────────────────
 python main.py reindex
 # Takes 10–30 minutes on the full dataset. Safe to skip on the demo dataset.
 
-# ── Step 4: Generate all three bundle sets from the same 100 random patients ─
+# ── Step 4: Generate both bundle sets from the same 100 random patients ──────
 python main.py all
 # Output:
 #   fhir_bundles/              ← Full (all data, no blinding)
 #   golddata_fhir_bundles/     ← Latest encounter blinded (no Dx, no Meds, no Notes)
-#   testing/                   ← Latest encounter blinded + notes restored
 
-# ── Step 5: Start dashboards (three separate terminals) ────────────────────
+# ── Step 5: Start dashboards (two separate terminals) ─────────────────────
 uvicorn web.app:app          --host 0.0.0.0 --port 8095 --reload
 uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
-uvicorn web.testing_app:app  --host 0.0.0.0 --port 8097 --reload
 ```
 
 | URL                     | Pipeline | Latest Conditions | Latest Meds | Notes |
 | ----------------------- | -------- | :---------------: | :---------: | :---: |
 | <http://localhost:8095> | Full     |         ✓         |      ✓      |   ✓   |
 | <http://localhost:8096> | GoldData |         ✗         |      ✗      |   ✗   |
-| <http://localhost:8097> | Testing  |         ✗         |      ✗      |   ✓   |
 
 ---
 
@@ -108,8 +105,8 @@ docker exec -it mimic_pg psql -U mimic -d mimiciv
 ## `python main.py all` — Shared Patient Selection
 
 `all` picks N random patients **once** from the database and passes the same list
-to all three generators. This guarantees identical patient cohorts across
-`fhir_bundles/`, `golddata_fhir_bundles/`, and `testing/`.
+to both generators. This guarantees identical patient cohorts across
+`fhir_bundles/` and `golddata_fhir_bundles/`.
 
 ```bash
 # Default: 100 random patients
@@ -174,24 +171,11 @@ no `Procedure`, no `MedicationRequest`, no `MedicationStatement` (ED),
 no `MedicationDispense` (ED), no `MedicationAdministration` (ICU),
 no `DocumentReference`. All prior encounters are fully included.
 
-### Testing FHIR bundles
-
-```bash
-python main.py testing
-python main.py testing --limit 50
-python main.py testing --subject-ids 10000032,10000084
-```
-
-Output → `testing/` — same as GoldData but latest encounter's `DocumentReference`
-(discharge notes + radiology) is restored. Designed for LLM evaluation where notes
-are the input and diagnoses/medications are the labels to predict.
-
 ### Start dashboards
 
 ```bash
 uvicorn web.app:app          --host 0.0.0.0 --port 8095 --reload
 uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
-uvicorn web.testing_app:app  --host 0.0.0.0 --port 8097 --reload
 ```
 
 ---
@@ -204,40 +188,39 @@ uvicorn web.testing_app:app  --host 0.0.0.0 --port 8097 --reload
 | `MIMIC_DATA_DIR` | `dataset/`                                                          |
 | `MIMIC_NOTE_DIR` | `dataset/note/`                                                     |
 | `GOLDDATA_OUT`   | `golddata_fhir_bundles`                                             |
-| `TESTING_OUT`    | `testing`                                                           |
 
 ---
 
 ## What Each Bundle Contains
 
-| Resource type                    | Source                  | Full |      GoldData      |      Testing       |
-| -------------------------------- | ----------------------- | :--: | :----------------: | :----------------: |
-| `Patient`                        | hosp.patients           |  ✓   |         ✓          |         ✓          |
-| `Encounter` (hospital)           | hosp.admissions         |  ✓   |         ✓          |         ✓          |
-| `Encounter` (ICU)                | icu.icustays            |  ✓   |         ✓          |         ✓          |
-| `Encounter` (ED)                 | ed.edstays              |  ✓   |         ✓          |         ✓          |
-| `Condition` (hospital)           | hosp.diagnoses_icd      |  ✓   | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `Condition` (ED)                 | ed.diagnosis            |  ✓   | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `MedicationRequest`              | hosp.prescriptions      |  ✓   | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `MedicationStatement`            | ed.medrecon             |  ✓   | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `MedicationDispense`             | ed.pyxis                |  ✓   | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `MedicationAdministration`       | icu.inputevents         |  ✓   | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `MedicationAdministration`       | icu.ingredientevents    |  ✓   | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `Procedure`                      | hosp.procedures_icd     |  ✓   | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `Observation` (labs)             | hosp.labevents          |  ✓   |         ✓          |         ✓          |
-| `Observation` (ICU vitals)       | icu.chartevents         |  ✓   |         ✓          |         ✓          |
-| `Observation` (ICU procedure)    | icu.procedureevents     |  ✓   |         ✓          |         ✓          |
-| `Observation` (ICU datetime)     | icu.datetimeevents      |  ✓   |         ✓          |         ✓          |
-| `Observation` (ICU output)       | icu.outputevents        |  ✓   |         ✓          |         ✓          |
-| `Observation` (OMR survey)       | hosp.omr                |  ✓   |         ✓          |         ✓          |
-| `Observation` (ED triage)        | ed.triage               |  ✓   |         ✓          |         ✓          |
-| `Observation` (ED vitals)        | ed.vitalsign            |  ✓   |         ✓          |         ✓          |
-| `DiagnosticReport`               | hosp.microbiologyevents |  ✓   |         ✓          |         ✓          |
-| `Claim` + `ExplanationOfBenefit` | hosp.drgcodes           |  ✓   |         ✓          |         ✓          |
-| `Practitioner`                   | hosp.provider           |  ✓   |         ✓          |         ✓          |
-| `Practitioner` (ICU caregiver)   | icu.caregivers          |  ✓   |         ✓          |         ✓          |
-| `DocumentReference` (discharge)  | note.discharge          |  ✓   | prior ✓ / latest ✗ |         ✓          |
-| `DocumentReference` (radiology)  | note.radiology          |  ✓   | prior ✓ / latest ✗ |         ✓          |
+| Resource type                    | Source                  | Full |      GoldData      |
+| -------------------------------- | ----------------------- | :--: | :----------------: |
+| `Patient`                        | hosp.patients           |  ✓   |         ✓          |
+| `Encounter` (hospital)           | hosp.admissions         |  ✓   |         ✓          |
+| `Encounter` (ICU)                | icu.icustays            |  ✓   |         ✓          |
+| `Encounter` (ED)                 | ed.edstays              |  ✓   |         ✓          |
+| `Condition` (hospital)           | hosp.diagnoses_icd      |  ✓   | prior ✓ / latest ✗ |
+| `Condition` (ED)                 | ed.diagnosis            |  ✓   | prior ✓ / latest ✗ |
+| `MedicationRequest`              | hosp.prescriptions      |  ✓   | prior ✓ / latest ✗ |
+| `MedicationStatement`            | ed.medrecon             |  ✓   | prior ✓ / latest ✗ |
+| `MedicationDispense`             | ed.pyxis                |  ✓   | prior ✓ / latest ✗ |
+| `MedicationAdministration`       | icu.inputevents         |  ✓   | prior ✓ / latest ✗ |
+| `MedicationAdministration`       | icu.ingredientevents    |  ✓   | prior ✓ / latest ✗ |
+| `Procedure`                      | hosp.procedures_icd     |  ✓   | prior ✓ / latest ✗ |
+| `Observation` (labs)             | hosp.labevents          |  ✓   |         ✓          |
+| `Observation` (ICU vitals)       | icu.chartevents         |  ✓   |         ✓          |
+| `Observation` (ICU procedure)    | icu.procedureevents     |  ✓   |         ✓          |
+| `Observation` (ICU datetime)     | icu.datetimeevents      |  ✓   |         ✓          |
+| `Observation` (ICU output)       | icu.outputevents        |  ✓   |         ✓          |
+| `Observation` (OMR survey)       | hosp.omr                |  ✓   |         ✓          |
+| `Observation` (ED triage)        | ed.triage               |  ✓   |         ✓          |
+| `Observation` (ED vitals)        | ed.vitalsign            |  ✓   |         ✓          |
+| `DiagnosticReport`               | hosp.microbiologyevents |  ✓   |         ✓          |
+| `Claim` + `ExplanationOfBenefit` | hosp.drgcodes           |  ✓   |         ✓          |
+| `Practitioner`                   | hosp.provider           |  ✓   |         ✓          |
+| `Practitioner` (ICU caregiver)   | icu.caregivers          |  ✓   |         ✓          |
+| `DocumentReference` (discharge)  | note.discharge          |  ✓   | prior ✓ / latest ✗ |
+| `DocumentReference` (radiology)  | note.radiology          |  ✓   | prior ✓ / latest ✗ |
 
 ---
 
@@ -269,7 +252,6 @@ pip install psycopg2-binary
 ```bash
 ls fhir_bundles/           # for port 8095
 ls golddata_fhir_bundles/  # for port 8096
-ls testing/                # for port 8097
 ```
 
 If empty, run `python main.py all`.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Standalone FHIR R4 resource builders for the golddata / testing pipelines.
+Standalone FHIR R4 resource builders for the golddata pipeline.
 
 Completely independent from mimic_to_bundle.py:
   - Different UUID namespace prevents ID collisions with standard fhir bundles.

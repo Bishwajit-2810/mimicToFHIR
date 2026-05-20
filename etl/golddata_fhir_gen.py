@@ -86,8 +86,7 @@ def convert_patient(
 ) -> tuple[int, int | None]:
     """Build a blinded bundle for one patient (no conditions, no medications).
 
-    include_notes=True adds DocumentReference (discharge + radiology) — used by
-    testing_gen.py to produce the testing/ variant.
+    include_notes=True adds DocumentReference (discharge + radiology).
 
     Returns (entry_count, latest_hadm_id).
     """
@@ -645,11 +644,11 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--dsn", default=DSN, help="PostgreSQL DSN")
     p.add_argument("--output", default=str(OUTPUT_DIR), help="Output directory")
-    p.add_argument("--notes", action="store_true", help="Include clinical notes (testing variant)")
+    p.add_argument("--notes", action="store_true", help="Include clinical notes")
     p.add_argument("--limit", type=int, default=None, help="Max patients to process")
     p.add_argument("--offset", type=int, default=0, help="Skip first N patients")
     p.add_argument("--subject-ids", default=None, help="Comma-separated subject_ids")
-    p.add_argument("--patient", type=int, default=None, help="Single patient (for testing)")
+    p.add_argument("--patient", type=int, default=None, help="Single patient subject_id")
     return p.parse_args()
 
 

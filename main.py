@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Entry point for the MIMIC-IV → PostgreSQL → FHIR R4 pipeline.
 
-Three output pipelines:
+Two output pipelines:
   bundle   → fhir_bundles/          Full data: conditions, procedures, meds, notes, vitals, labs
   golddata → golddata_fhir_bundles/ Blind:  latest encounter has no conditions, procedures, meds, notes
-  testing  → testing/               Blind + notes: latest encounter has no conditions, procedures, meds; WITH notes
 
-Use `all` to generate all three from the same random patient sample.
+Use `all` to generate both from the same random patient sample.
 """
 
 import argparse
@@ -77,26 +76,13 @@ def cmd_golddata(args):
     )
 
 
-def cmd_testing(args):
-    from etl.testing_gen import convert, DSN, OUTPUT_DIR
-    sids = [int(s.strip()) for s in args.subject_ids.split(",")] if args.subject_ids else None
-    convert(
-        dsn=args.dsn or DSN,
-        output_dir=Path(args.output) if args.output else OUTPUT_DIR,
-        limit=args.limit,
-        offset=args.offset,
-        subject_ids=sids,
-        random_sample=args.random,
-    )
-
 
 def cmd_all(args):
-    """Run all three pipelines on the same randomly selected patients."""
+    """Run both pipelines on the same randomly selected patients."""
     import psycopg2
     import psycopg2.extras
     from etl.mimic_to_bundle import convert as bundle_convert, DSN, OUTPUT_DIR as BUNDLE_OUT
     from etl.golddata_fhir_gen import convert as gold_convert, OUTPUT_DIR as GOLD_OUT
-    from etl.testing_gen import convert as test_convert, OUTPUT_DIR as TEST_OUT
 
     dsn = args.dsn or DSN
 
@@ -115,7 +101,7 @@ def cmd_all(args):
         conn.close()
         print(f"Selected patients: {sids}\n")
 
-    print("=== Step 1/3: Full FHIR bundles ===")
+    print("=== Step 1/2: Full FHIR bundles ===")
     bundle_convert(
         dsn=dsn,
         output_dir=Path(args.output) / "fhir_bundles" if args.output else BUNDLE_OUT,
@@ -123,7 +109,7 @@ def cmd_all(args):
         random_sample=False,
     )
 
-    print("\n=== Step 2/3: GoldData FHIR bundles ===")
+    print("\n=== Step 2/2: GoldData FHIR bundles ===")
     gold_convert(
         dsn=dsn,
         output_dir=Path(args.output) / "golddata_fhir_bundles" if args.output else GOLD_OUT,
@@ -132,15 +118,7 @@ def cmd_all(args):
         random_sample=False,
     )
 
-    print("\n=== Step 3/3: Testing FHIR bundles ===")
-    test_convert(
-        dsn=dsn,
-        output_dir=Path(args.output) / "testing" if args.output else TEST_OUT,
-        subject_ids=sids,
-        random_sample=False,
-    )
-
-    print(f"\nAll three pipelines complete. Same {len(sids)} patients across all outputs.")
+    print(f"\nBoth pipelines complete. Same {len(sids)} patients across all outputs.")
 
 
 def _add_batch_args(p):
@@ -161,7 +139,6 @@ def main():
 Pipelines:
   bundle    fhir_bundles/           Full data: conditions, procedures, meds, notes, vitals, labs
   golddata  golddata_fhir_bundles/  Blind: latest encounter has no conditions, procedures, meds, notes
-  testing   testing/                Blind + notes: latest encounter has no conditions, procedures, meds; WITH notes
 """,
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -205,20 +182,13 @@ Pipelines:
     )
     _add_batch_args(p_gold)
 
-    # ── testing (blind + notes) ───────────────────────────────────────────────
-    p_test = sub.add_parser(
-        "testing",
-        help="Testing pipeline → testing/ (no conditions, no meds, WITH clinical notes)",
-    )
-    _add_batch_args(p_test)
-
-    # ── all (same patients across all three) ──────────────────────────────────
+    # ── all (same patients across both) ──────────────────────────────────────
     p_all = sub.add_parser(
         "all",
-        help="Run all three pipelines on the same random patients (recommended)",
+        help="Run both pipelines on the same random patients (recommended)",
     )
     p_all.add_argument("--dsn", default=None, help="Override PostgreSQL DSN")
-    p_all.add_argument("--output", default=None, help="Base output directory (creates fhir_bundles/, golddata_fhir_bundles/, testing/ inside)")
+    p_all.add_argument("--output", default=None, help="Base output directory (creates fhir_bundles/, golddata_fhir_bundles/ inside)")
     p_all.add_argument("--limit", type=int, default=100, help="Number of random patients (default: 100)")
     p_all.add_argument("--subject-ids", default=None, help="Comma-separated subject_ids; skips random selection")
 
@@ -230,7 +200,6 @@ Pipelines:
         "convert":  cmd_convert,
         "bundle":   cmd_bundle,
         "golddata": cmd_golddata,
-        "testing":  cmd_testing,
         "all":      cmd_all,
     }
     dispatch[args.command](args)

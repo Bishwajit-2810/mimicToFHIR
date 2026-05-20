@@ -5,21 +5,19 @@ A full-stack clinical data platform built on
 [MIMIC-IV-Note v2.2](https://physionet.org/content/mimic-iv-note/2.2/).
 
 Loads de-identified patient records into PostgreSQL, converts them to FHIR R4
-transaction bundles, and serves them through three independent web dashboards.
+transaction bundles, and serves them through two independent web dashboards.
 
 ---
 
-## Three Pipelines
+## Two Pipelines
 
 | Pipeline | Output dir | Port | Conditions | Procedures | Medications | Notes | Vitals / Labs |
 | --- | --- | --- | :---: | :---: | :---: | :---: | :---: |
 | `main.py bundle` | `fhir_bundles/` | 8095 | ✅ all | ✅ all | ✅ all | ✅ all | ✅ |
 | `main.py golddata` | `golddata_fhir_bundles/` | 8096 | prior ✅ / latest ❌ | prior ✅ / latest ❌ | prior ✅ / latest ❌ | prior ✅ / latest ❌ | ✅ |
-| `main.py testing` | `testing/` | 8097 | prior ✅ / latest ❌ | prior ✅ / latest ❌ | prior ✅ / latest ❌ | ✅ all | ✅ |
 
 **Full** — complete clinical record for every encounter, no blinding.  
-**GoldData** — latest hospital encounter and latest ED stay are blinded: ICD diagnoses, procedures, medications, and notes removed from the most recent visit only. All prior encounters remain intact.  
-**Testing** — same blind as GoldData but the latest encounter's clinical notes (DocumentReference) are restored, making it useful for LLM evaluation where notes are the input.
+**GoldData** — latest hospital encounter and latest ED stay are blinded: ICD diagnoses, procedures, medications, and notes removed from the most recent visit only. All prior encounters remain intact.
 
 ---
 
@@ -39,7 +37,7 @@ transaction bundles, and serves them through three independent web dashboards.
 
 ## Single Database
 
-All three pipelines share one PostgreSQL container. Load data once.
+Both pipelines share one PostgreSQL container. Load data once.
 
 | Container | Port | Default DSN |
 |---|---|---|
@@ -58,7 +56,7 @@ pip install psycopg2-binary fastapi "uvicorn[standard]"
 
 ---
 
-## Quick Start — All Three Pipelines
+## Quick Start — Both Pipelines
 
 ### 1. Start the container
 
@@ -95,13 +93,12 @@ python main.py reindex
 ### 4. Generate FHIR bundles
 
 ```bash
-# All three pipelines on the same 100 random patients (recommended)
+# Both pipelines on the same 100 random patients (recommended)
 python main.py all
 
 # Or individually (100 random patients each by default)
 python main.py bundle    # → fhir_bundles/
 python main.py golddata  # → golddata_fhir_bundles/
-python main.py testing   # → testing/
 ```
 
 ### 5. Run the dashboards
@@ -109,7 +106,6 @@ python main.py testing   # → testing/
 ```bash
 uvicorn web.app:app          --host 0.0.0.0 --port 8095 --reload
 uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
-uvicorn web.testing_app:app  --host 0.0.0.0 --port 8097 --reload
 ```
 
 ---
@@ -125,10 +121,9 @@ Subcommands:
   convert   PostgreSQL → flat FHIR NDJSON (one file per resource type)
   bundle    Full pipeline  → fhir_bundles/
   golddata  Blind pipeline → golddata_fhir_bundles/  (latest encounter: no Dx/Meds/Notes)
-  testing   Blind + notes  → testing/                (latest encounter: no Dx/Meds, WITH Notes)
-  all       Run all three on the same random patients (recommended)
+  all       Run both on the same random patients (recommended)
 
-Common batch options (bundle / golddata / testing / all):
+Common batch options (bundle / golddata / all):
   --dsn              Override PostgreSQL DSN
   --output           Override output directory
   --limit N          Number of patients (default: 100)
@@ -146,34 +141,34 @@ load-specific options:
 
 ## FHIR Resource Mappings
 
-| MIMIC-IV source | FHIR R4 resource | bundle | golddata | testing |
-|---|---|:---:|:---:|:---:|
-| `hosp.patients` | `Patient` | ✓ | ✓ | ✓ |
-| `hosp.admissions` | `Encounter` (hospital) | ✓ | ✓ | ✓ |
-| `icu.icustays` | `Encounter` (ICU) | ✓ | ✓ | ✓ |
-| `ed.edstays` | `Encounter` (ED) | ✓ | ✓ | ✓ |
-| `hosp.diagnoses_icd` | `Condition` (hospital) | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `ed.diagnosis` | `Condition` (ED) | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `hosp.prescriptions` | `MedicationRequest` | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `ed.medrecon` | `MedicationStatement` (ED) | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `ed.pyxis` | `MedicationDispense` (ED) | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `icu.inputevents` | `MedicationAdministration` (ICU) | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `icu.ingredientevents` | `MedicationAdministration` (ICU) | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `hosp.procedures_icd` | `Procedure` | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `hosp.labevents` | `Observation` (laboratory) | ✓ | ✓ | ✓ |
-| `icu.chartevents` | `Observation` (vital-signs) | ✓ | ✓ | ✓ |
-| `icu.procedureevents` | `Observation` (ICU procedure) | ✓ | ✓ | ✓ |
-| `icu.datetimeevents` | `Observation` (ICU datetime) | ✓ | ✓ | ✓ |
-| `icu.outputevents` | `Observation` (ICU output) | ✓ | ✓ | ✓ |
-| `hosp.omr` | `Observation` (survey) | ✓ | ✓ | ✓ |
-| `ed.triage` | `Observation` (ED triage) | ✓ | ✓ | ✓ |
-| `ed.vitalsign` | `Observation` (ED vitals) | ✓ | ✓ | ✓ |
-| `hosp.microbiologyevents` | `DiagnosticReport` + `Observation` | ✓ | ✓ | ✓ |
-| `hosp.drgcodes` | `Claim` + `ExplanationOfBenefit` | ✓ | ✓ | ✓ |
-| `hosp.provider` | `Practitioner` | ✓ | ✓ | ✓ |
-| `icu.caregivers` | `Practitioner` (ICU) | ✓ | ✓ | ✓ |
-| `note.discharge` + `discharge_detail` | `DocumentReference` (discharge) | ✓ | prior ✓ / latest ✗ | ✓ |
-| `note.radiology` + `radiology_detail` | `DocumentReference` (radiology) | ✓ | prior ✓ / latest ✗ | ✓ |
+| MIMIC-IV source | FHIR R4 resource | bundle | golddata |
+|---|---|:---:|:---:|
+| `hosp.patients` | `Patient` | ✓ | ✓ |
+| `hosp.admissions` | `Encounter` (hospital) | ✓ | ✓ |
+| `icu.icustays` | `Encounter` (ICU) | ✓ | ✓ |
+| `ed.edstays` | `Encounter` (ED) | ✓ | ✓ |
+| `hosp.diagnoses_icd` | `Condition` (hospital) | ✓ | prior ✓ / latest ✗ |
+| `ed.diagnosis` | `Condition` (ED) | ✓ | prior ✓ / latest ✗ |
+| `hosp.prescriptions` | `MedicationRequest` | ✓ | prior ✓ / latest ✗ |
+| `ed.medrecon` | `MedicationStatement` (ED) | ✓ | prior ✓ / latest ✗ |
+| `ed.pyxis` | `MedicationDispense` (ED) | ✓ | prior ✓ / latest ✗ |
+| `icu.inputevents` | `MedicationAdministration` (ICU) | ✓ | prior ✓ / latest ✗ |
+| `icu.ingredientevents` | `MedicationAdministration` (ICU) | ✓ | prior ✓ / latest ✗ |
+| `hosp.procedures_icd` | `Procedure` | ✓ | prior ✓ / latest ✗ |
+| `hosp.labevents` | `Observation` (laboratory) | ✓ | ✓ |
+| `icu.chartevents` | `Observation` (vital-signs) | ✓ | ✓ |
+| `icu.procedureevents` | `Observation` (ICU procedure) | ✓ | ✓ |
+| `icu.datetimeevents` | `Observation` (ICU datetime) | ✓ | ✓ |
+| `icu.outputevents` | `Observation` (ICU output) | ✓ | ✓ |
+| `hosp.omr` | `Observation` (survey) | ✓ | ✓ |
+| `ed.triage` | `Observation` (ED triage) | ✓ | ✓ |
+| `ed.vitalsign` | `Observation` (ED vitals) | ✓ | ✓ |
+| `hosp.microbiologyevents` | `DiagnosticReport` + `Observation` | ✓ | ✓ |
+| `hosp.drgcodes` | `Claim` + `ExplanationOfBenefit` | ✓ | ✓ |
+| `hosp.provider` | `Practitioner` | ✓ | ✓ |
+| `icu.caregivers` | `Practitioner` (ICU) | ✓ | ✓ |
+| `note.discharge` + `discharge_detail` | `DocumentReference` (discharge) | ✓ | prior ✓ / latest ✗ |
+| `note.radiology` + `radiology_detail` | `DocumentReference` (radiology) | ✓ | prior ✓ / latest ✗ |
 
 > **"latest" blinding** applies to the most recent hospital admission (`latest_hadm`) and
 > the most recent ED stay (`latest_ed_stay`). All prior encounters are always included.  
@@ -184,7 +179,7 @@ load-specific options:
 
 ## Dashboard UI — Tabs
 
-All three dashboards share the same `static/` UI. A coloured dataset banner at
+Both dashboards share the same `static/` UI. A coloured dataset banner at
 the top identifies which pipeline is active and which resources are included.
 
 | Tab | Contents |
@@ -196,7 +191,7 @@ the top identifies which pipeline is active and which resources are included.
 | **Clinical Notes** | Discharge summaries · Radiology reports · Searchable full text |
 
 Conditions and Medications sections show "No data recorded" for the latest
-encounter on GoldData and Testing bundles — this is correct and expected.
+encounter on GoldData bundles — this is correct and expected.
 
 ---
 
@@ -206,7 +201,6 @@ encounter on GoldData and Testing bundles — this is correct and expected.
 |---|---|---|
 | `fhir_bundles/` | bundle | One JSON per patient — full clinical data, no blinding |
 | `golddata_fhir_bundles/` | golddata | One JSON per patient — latest encounter blinded |
-| `testing/` | testing | One JSON per patient — latest encounter blinded + notes restored |
 | `fhir_output/` | convert | Flat NDJSON per resource type (optional) |
 
 ---
@@ -219,7 +213,6 @@ encounter on GoldData and Testing bundles — this is correct and expected.
 | `MIMIC_DATA_DIR` | `dataset/` | load — hosp/, icu/, ed/ parent directory |
 | `MIMIC_NOTE_DIR` | `dataset/note/` | load — note CSV directory |
 | `GOLDDATA_OUT` | `golddata_fhir_bundles` | golddata output directory |
-| `TESTING_OUT` | `testing` | testing output directory |
 
 ---
 
@@ -236,16 +229,14 @@ encounter on GoldData and Testing bundles — this is correct and expected.
 │   ├── mimic_to_bundle.py       # Full pipeline — all resources, no blinding
 │   ├── mimic_to_fhir.py         # Flat NDJSON per resource type (optional)
 │   ├── golddata_fhir_gen.py     # Blind pipeline — latest encounter blinded
-│   ├── golddata_builder.py      # FHIR builders for golddata/testing (isolated UUID namespace)
-│   └── testing_gen.py           # Testing pipeline — golddata with include_notes=True
+│   └── golddata_builder.py      # FHIR builders for golddata (isolated UUID namespace)
 │
 ├── web/
 │   ├── parser.py                # Shared FHIR bundle → API response parser
 │   ├── app.py                   # Full dashboard      (port 8095, fhir_bundles/)
-│   ├── golddata_app.py          # GoldData dashboard  (port 8096, golddata_fhir_bundles/)
-│   └── testing_app.py           # Testing dashboard   (port 8097, testing/)
+│   └── golddata_app.py          # GoldData dashboard  (port 8096, golddata_fhir_bundles/)
 │
-├── static/                      # Shared UI (served by all three apps)
+├── static/                      # Shared UI (served by both apps)
 │   ├── index.html
 │   ├── app.js
 │   └── style.css
@@ -256,7 +247,6 @@ encounter on GoldData and Testing bundles — this is correct and expected.
 │
 ├── fhir_bundles/                # Full FHIR bundles
 ├── golddata_fhir_bundles/       # GoldData bundles (latest encounter blinded)
-├── testing/                     # Testing bundles (latest encounter blinded + notes)
 └── fhir_output/                 # Flat NDJSON (optional)
 ```
 
