@@ -35,6 +35,7 @@ note.radiology          -> DocumentReference (radiology notes, with detail)
 """
 
 import json
+import math
 import os
 import re
 import uuid
@@ -159,6 +160,17 @@ def _entry(resource: dict) -> dict:
         "resource": resource,
         "request": {"method": "POST", "url": resource["resourceType"]},
     }
+
+
+def _sanitize_for_json(obj):
+    """Recursively replace NaN/Inf floats with None for valid JSON output."""
+    if isinstance(obj, float):
+        return None if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(v) for v in obj]
+    return obj
 
 
 # ── OMB race / ethnicity mapping ──────────────────────────────────────────────
@@ -612,6 +624,12 @@ _ED_VITAL_LOINC: dict[str, tuple[str, str, str]] = {
 
 def build_lab_observation(row: dict, patient_uid: str, enc_uid: str | None) -> dict:
     uid = _uuid("lab", row["labevent_id"])
+    lab_coding = []
+    if row.get("loinc_code"):
+        lab_coding.append(_coding("http://loinc.org", row["loinc_code"], row.get("label")))
+    lab_coding.append(
+        _coding("http://mimic.mit.edu/fhir/CodeSystem/d-labitems", str(row["itemid"]), row.get("label"))
+    )
     obs: dict = {
         "resourceType": "Observation",
         "id": uid,
@@ -627,9 +645,7 @@ def build_lab_observation(row: dict, patient_uid: str, enc_uid: str | None) -> d
             }
         ],
         "code": {
-            "coding": [
-                _coding("http://loinc.org", str(row["itemid"]), row.get("label"))
-            ],
+            "coding": lab_coding,
             "text": row.get("label") or str(row["itemid"]),
         },
         "subject": _ref(patient_uid),
@@ -710,7 +726,7 @@ def build_chart_observation(row: dict, patient_uid: str, enc_uid: str) -> dict:
                 ]
             }
         ],
-        "code": {"coding": coding, "text": row.get("label")},
+        "code": {"coding": coding, "text": row.get("label") or str(row["itemid"])},
         "subject": _ref(patient_uid),
         "encounter": _ref(enc_uid),
         **(
@@ -826,7 +842,7 @@ def build_output_observation(row: dict, patient_uid: str, enc_uid: str) -> dict:
 
 def build_input_event(row: dict, patient_uid: str, enc_uid: str) -> dict:
     """Build a MedicationAdministration for an ICU input event."""
-    uid = _uuid("input-event", row["stay_id"], row["orderid"])
+    uid = _uuid("input-event", row["stay_id"], row["orderid"], row["itemid"])
     status = "stopped" if row.get("statusdescription") == "Stopped" else "completed"
     category_name = row.get("ordercategoryname")
     r: dict = {
@@ -853,6 +869,8 @@ def build_input_event(row: dict, patient_uid: str, enc_uid: str) -> dict:
         }
     elif row.get("starttime"):
         r["effectiveDateTime"] = _dt(row["starttime"])
+    elif row.get("endtime"):
+        r["effectiveDateTime"] = _dt(row["endtime"])
     if row.get("amount") is not None:
         r["dosage"] = {
             "dose": _quantity(
@@ -890,6 +908,8 @@ def build_ingredient_event(row: dict, patient_uid: str, enc_uid: str) -> dict:
         }
     elif row.get("starttime"):
         r["effectiveDateTime"] = _dt(row["starttime"])
+    elif row.get("endtime"):
+        r["effectiveDateTime"] = _dt(row["endtime"])
     if row.get("amount") is not None:
         r["dosage"] = {
             "dose": _quantity(
@@ -977,6 +997,7 @@ def build_diagnostic_report(
             **({"encounter": _ref(enc_uid)} if enc_uid else {}),
             **(
                 {"effectiveDateTime": _dt(row.get("charttime") or row.get("chartdate"))}
+                if (row.get("charttime") or row.get("chartdate")) else {}
             ),
         }
         if row.get("org_name"):
@@ -1004,7 +1025,8 @@ def build_diagnostic_report(
         "code": {"text": first.get("spec_type_desc")},
         "subject": _ref(patient_uid),
         **({"encounter": _ref(enc_uid)} if enc_uid else {}),
-        "effectiveDateTime": _dt(first.get("charttime") or first.get("chartdate")),
+        **({"effectiveDateTime": _dt(first.get("charttime") or first.get("chartdate"))}
+           if (first.get("charttime") or first.get("chartdate")) else {}),
         "result": obs_refs,
     }
     return [report] + obs_resources
@@ -1028,7 +1050,7 @@ def build_omr_observation(row: dict, patient_uid: str) -> dict:
         ],
         "code": {"text": row["result_name"]},
         "subject": _ref(patient_uid),
-        "effectiveDateTime": _dt(row["chartdate"]),
+        **({"effectiveDateTime": _dt(row["chartdate"])} if row.get("chartdate") else {}),
         "valueString": str(row["result_value"]),
     }
 
@@ -1323,7 +1345,7 @@ def build_ed_medrecon(row: dict, patient_uid: str, enc_uid: str) -> dict:
     uid = _uuid(
         "ed-medrecon",
         row["stay_id"],
-        row.get("etc_rn") or 0,
+        row.get("charttime") or row.get("etc_rn") or 0,
         row.get("name") or "",
     )
     r: dict = {
@@ -1552,7 +1574,8 @@ def build_eob(
         "use": "claim",
         "patient": {"reference": _urn(patient_uid)},
         "billablePeriod": {
-            "start": _dt(adm.get("dischtime") or adm["admittime"]),
+            "start": _dt(adm["admittime"]),
+            **({"end": _dt(adm["dischtime"])} if adm.get("dischtime") else {}),
         },
         "created": _dt(adm.get("dischtime") or adm["admittime"]),
         "insurer": {"display": insurance},
@@ -1638,8 +1661,14 @@ def build_bundle(entries: list[dict]) -> dict:
 
 def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
     entries: list[dict] = []
+    _seen_ids: set[str] = set()
 
     def add(resource: dict):
+        rid = resource.get("id")
+        if rid and rid in _seen_ids:
+            return
+        if rid:
+            _seen_ids.add(rid)
         entries.append(_entry(resource))
 
     patient_uid = _uuid("patient", subject_id)
@@ -1780,7 +1809,7 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
         add(build_lab_observation(row, patient_uid, enc_uid))
 
-    # Chart observations (vitals only)
+    # Chart observations (vitals only) — capped per patient to limit bundle size
     chart_item_ids = list(_CHART_LOINC.keys())
     cur.execute(
         f"""
@@ -1788,6 +1817,8 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         FROM icu.chartevents c
         LEFT JOIN icu.d_items d ON c.itemid = d.itemid
         WHERE c.subject_id = %s AND c.itemid IN ({','.join('%s' for _ in chart_item_ids)})
+        ORDER BY c.charttime DESC
+        LIMIT 2000
         """,
         (subject_id, *chart_item_ids),
     )
@@ -1813,14 +1844,15 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
     for row in cur.fetchall():
         add(build_icu_caregiver(row))
 
-    # ICU datetime observations
+    # ICU datetime observations — capped per patient
     cur.execute(
         """
         SELECT de.*, d.label
         FROM icu.datetimeevents de
         LEFT JOIN icu.d_items d ON de.itemid = d.itemid
         WHERE de.subject_id = %s
-        ORDER BY de.charttime
+        ORDER BY de.charttime DESC
+        LIMIT 500
         """,
         (subject_id,),
     )
@@ -1829,14 +1861,15 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         if enc_uid:
             add(build_datetime_observation(row, patient_uid, enc_uid))
 
-    # ICU output observations
+    # ICU output observations — capped per patient
     cur.execute(
         """
         SELECT oe.*, d.label
         FROM icu.outputevents oe
         LEFT JOIN icu.d_items d ON oe.itemid = d.itemid
         WHERE oe.subject_id = %s
-        ORDER BY oe.charttime
+        ORDER BY oe.charttime DESC
+        LIMIT 500
         """,
         (subject_id,),
     )
@@ -1845,14 +1878,15 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         if enc_uid:
             add(build_output_observation(row, patient_uid, enc_uid))
 
-    # ICU input events (all encounters — no blinding in bundle pipeline)
+    # ICU input events — capped per patient
     cur.execute(
         """
         SELECT ie.*, d.label
         FROM icu.inputevents ie
         LEFT JOIN icu.d_items d ON ie.itemid = d.itemid
         WHERE ie.subject_id = %s
-        ORDER BY ie.starttime
+        ORDER BY ie.starttime DESC
+        LIMIT 2000
         """,
         (subject_id,),
     )
@@ -1861,14 +1895,15 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         if enc_uid:
             add(build_input_event(row, patient_uid, enc_uid))
 
-    # ICU ingredient events (all encounters — no blinding in bundle pipeline)
+    # ICU ingredient events — capped per patient
     cur.execute(
         """
         SELECT ige.*, d.label
         FROM icu.ingredientevents ige
         LEFT JOIN icu.d_items d ON ige.itemid = d.itemid
         WHERE ige.subject_id = %s
-        ORDER BY ige.starttime
+        ORDER BY ige.starttime DESC
+        LIMIT 2000
         """,
         (subject_id,),
     )
@@ -1989,7 +2024,7 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
 
     bundle = build_bundle(entries)
     out_path = output_dir / f"{subject_id}.json"
-    out_path.write_text(json.dumps(bundle, default=str, indent=2), encoding="utf-8")
+    out_path.write_text(json.dumps(_sanitize_for_json(bundle), default=str, indent=2), encoding="utf-8")
     return len(entries)
 
 
@@ -2012,7 +2047,7 @@ def convert(
     if subject_ids is not None:
         sids = subject_ids
     else:
-        effective_limit = limit if limit is not None else (20 if random_sample else None)
+        effective_limit = limit if limit is not None else (100 if random_sample else None)
         if random_sample:
             query = "SELECT subject_id FROM hosp.patients ORDER BY RANDOM()"
         else:

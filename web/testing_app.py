@@ -34,14 +34,14 @@ STATIC_DIR = Path("static")
 _DATASET_INFO = {
     "mode": "testing",
     "label": "Testing",
-    "description": "Blind dataset with clinical notes — no diagnoses, no medications",
+    "description": "Blind dataset with clinical notes — latest encounter: no diagnoses, no procedures, no medications",
     "includes": {
         "conditions": False,
         "medications": False,
         "notes": True,
         "vitals": True,
         "labs": True,
-        "procedures": True,
+        "procedures": False,
         "encounters": True,
     },
     "color": "#34d399",

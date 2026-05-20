@@ -16,13 +16,13 @@ ALWAYS INCLUDED (all encounters):
                            ICU output events (icu.outputevents),
                            ED triage (ed.triage), ED vitalsigns (ed.vitalsign)
     • Practitioner       — ICU caregivers (icu.datetimeevents / inputevents / outputevents)
-    • Procedure          — ICD-coded procedures (hosp.procedures_icd)
     • DiagnosticReport   — microbiology (hosp.microbiologyevents)
     • Claim + ExplanationOfBenefit — DRG-based (hosp.drgcodes)
 
 INCLUDED FOR PRIOR ENCOUNTERS ONLY (blinded for latest hosp + latest ED stay):
     • Condition          — hosp ICD diagnoses (hosp.diagnoses_icd),
                            ED diagnoses (ed.diagnosis)
+    • Procedure          — ICD-coded procedures (hosp.procedures_icd)
     • MedicationRequest  — prescriptions (hosp.prescriptions)
     • MedicationAdministration — ICU input events (icu.inputevents),
                                  ICU ingredient events (icu.ingredientevents)
@@ -92,8 +92,14 @@ def convert_patient(
     Returns (entry_count, latest_hadm_id).
     """
     entries: list[dict] = []
+    _seen_ids: set[str] = set()
 
     def add(resource: dict) -> None:
+        rid = resource.get("id")
+        if rid and rid in _seen_ids:
+            return
+        if rid:
+            _seen_ids.add(rid)
         entries.append(bb._entry(resource))
 
     patient_uid = bb._uuid("patient", subject_id)
@@ -291,22 +297,23 @@ def convert_patient(
         add(claim)
         add(bb.build_eob(adm, patient_uid, bb.BIDMC_UUID, p_uid, claim["id"], enc_uid))
 
-    # ── Procedures (ICD) — included (already-performed, not diagnostic) ──────
-    cur.execute(
-        """
-        SELECT p.*, i.long_title
-        FROM hosp.procedures_icd p
-        LEFT JOIN hosp.d_icd_procedures i
-               ON p.icd_code = i.icd_code AND p.icd_version = i.icd_version
-        WHERE p.subject_id = %s
-        ORDER BY p.hadm_id, p.seq_num
-        """,
-        (subject_id,),
-    )
-    for row in cur.fetchall():
-        enc_uid = hosp_enc_uids.get(row["hadm_id"])
-        if enc_uid:
-            add(bb.build_procedure(row, patient_uid, enc_uid))
+    # ── Procedures (ICD) — prior encounters only (latest encounter blinded as treatment) ──
+    if latest_hadm is not None:
+        cur.execute(
+            """
+            SELECT p.*, i.long_title
+            FROM hosp.procedures_icd p
+            LEFT JOIN hosp.d_icd_procedures i
+                   ON p.icd_code = i.icd_code AND p.icd_version = i.icd_version
+            WHERE p.subject_id = %s AND p.hadm_id != %s
+            ORDER BY p.hadm_id, p.seq_num
+            """,
+            (subject_id, latest_hadm),
+        )
+        for row in cur.fetchall():
+            enc_uid = hosp_enc_uids.get(row["hadm_id"])
+            if enc_uid:
+                add(bb.build_procedure(row, patient_uid, enc_uid))
 
     # ── Lab observations — capped per patient ─────────────────────────────────
     cur.execute(
@@ -328,7 +335,7 @@ def convert_patient(
             seen_labs.add(obs["id"])
             add(obs)
 
-    # ── ICU chart observations (vitals) ───────────────────────────────────────
+    # ── ICU chart observations (vitals) — capped per patient ─────────────────
     if _CHART_ITEM_IDS:
         placeholders = ",".join("%s" for _ in _CHART_ITEM_IDS)
         cur.execute(
@@ -337,6 +344,8 @@ def convert_patient(
             FROM icu.chartevents c
             LEFT JOIN icu.d_items d ON c.itemid = d.itemid
             WHERE c.subject_id = %s AND c.itemid IN ({placeholders})
+            ORDER BY c.charttime DESC
+            LIMIT 2000
             """,
             (subject_id, *_CHART_ITEM_IDS),
         )
@@ -349,14 +358,15 @@ def convert_patient(
                     seen_charts.add(obs["id"])
                     add(obs)
 
-    # ── ICU procedure events ──────────────────────────────────────────────────
+    # ── ICU procedure events — capped per patient ────────────────────────────
     cur.execute(
         """
         SELECT pe.*, d.label
         FROM icu.procedureevents pe
         LEFT JOIN icu.d_items d ON pe.itemid = d.itemid
         WHERE pe.subject_id = %s
-        ORDER BY pe.starttime
+        ORDER BY pe.starttime DESC
+        LIMIT 500
         """,
         (subject_id,),
     )
@@ -382,14 +392,15 @@ def convert_patient(
     for row in cur.fetchall():
         add(bb.build_icu_caregiver(row))
 
-    # ── ICU datetime observations (always included — observations, no blinding) ─
+    # ── ICU datetime observations — capped per patient ───────────────────────
     cur.execute(
         """
         SELECT de.*, d.label
         FROM icu.datetimeevents de
         LEFT JOIN icu.d_items d ON de.itemid = d.itemid
         WHERE de.subject_id = %s
-        ORDER BY de.charttime
+        ORDER BY de.charttime DESC
+        LIMIT 500
         """,
         (subject_id,),
     )
@@ -398,14 +409,15 @@ def convert_patient(
         if enc_uid:
             add(bb.build_datetime_observation(row, patient_uid, enc_uid))
 
-    # ── ICU output observations (always included — observations, no blinding) ──
+    # ── ICU output observations — capped per patient ─────────────────────────
     cur.execute(
         """
         SELECT oe.*, d.label
         FROM icu.outputevents oe
         LEFT JOIN icu.d_items d ON oe.itemid = d.itemid
         WHERE oe.subject_id = %s
-        ORDER BY oe.charttime
+        ORDER BY oe.charttime DESC
+        LIMIT 500
         """,
         (subject_id,),
     )
@@ -414,7 +426,7 @@ def convert_patient(
         if enc_uid:
             add(bb.build_output_observation(row, patient_uid, enc_uid))
 
-    # ── ICU input events (blinded for latest ICU stay — same rule as MedicationRequest) ─
+    # ── ICU input events (blinded for latest hosp encounter) — capped per patient ─
     if latest_hadm is not None:
         cur.execute(
             """
@@ -422,7 +434,8 @@ def convert_patient(
             FROM icu.inputevents ie
             LEFT JOIN icu.d_items d ON ie.itemid = d.itemid
             WHERE ie.subject_id = %s AND ie.hadm_id != %s
-            ORDER BY ie.starttime
+            ORDER BY ie.starttime DESC
+            LIMIT 2000
             """,
             (subject_id, latest_hadm),
         )
@@ -431,7 +444,7 @@ def convert_patient(
             if enc_uid:
                 add(bb.build_input_event(row, patient_uid, enc_uid))
 
-    # ── ICU ingredient events (blinded for latest ICU stay — same rule as MedicationRequest) ─
+    # ── ICU ingredient events (blinded for latest hosp encounter) — capped per patient ─
     if latest_hadm is not None:
         cur.execute(
             """
@@ -439,7 +452,8 @@ def convert_patient(
             FROM icu.ingredientevents ige
             LEFT JOIN icu.d_items d ON ige.itemid = d.itemid
             WHERE ige.subject_id = %s AND ige.hadm_id != %s
-            ORDER BY ige.starttime
+            ORDER BY ige.starttime DESC
+            LIMIT 2000
             """,
             (subject_id, latest_hadm),
         )
@@ -551,7 +565,7 @@ def convert_patient(
     # ── Write bundle ──────────────────────────────────────────────────────────
     bundle = bb.build_bundle(entries, latest_hadm_id=latest_hadm)
     out_path = output_dir / f"{subject_id}.json"
-    out_path.write_text(json.dumps(bundle, default=str, indent=2), encoding="utf-8")
+    out_path.write_text(json.dumps(bb._sanitize_for_json(bundle), default=str, indent=2), encoding="utf-8")
     return len(entries), latest_hadm
 
 
@@ -583,7 +597,7 @@ def convert(
     if subject_ids is not None:
         sids = subject_ids
     else:
-        effective_limit = limit if limit is not None else (20 if random_sample else None)
+        effective_limit = limit if limit is not None else (100 if random_sample else None)
         if random_sample:
             query = "SELECT subject_id FROM hosp.patients ORDER BY RANDOM()"
         else:

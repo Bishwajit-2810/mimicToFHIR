@@ -11,14 +11,14 @@ transaction bundles, and serves them through three independent web dashboards.
 
 ## Three Pipelines
 
-| Pipeline | Output dir | Port | Conditions | Medications | Notes | Vitals / Labs |
-|---|---|---|:---:|:---:|:---:|:---:|
-| `main.py bundle` | `fhir_bundles/` | 8095 | ✅ all | ✅ all | ✅ all | ✅ |
-| `main.py golddata` | `golddata_fhir_bundles/` | 8096 | prior ✅ / latest ❌ | prior ✅ / latest ❌ | prior ✅ / latest ❌ | ✅ |
-| `main.py testing` | `testing/` | 8097 | prior ✅ / latest ❌ | prior ✅ / latest ❌ | ✅ all | ✅ |
+| Pipeline | Output dir | Port | Conditions | Procedures | Medications | Notes | Vitals / Labs |
+| --- | --- | --- | :---: | :---: | :---: | :---: | :---: |
+| `main.py bundle` | `fhir_bundles/` | 8095 | ✅ all | ✅ all | ✅ all | ✅ all | ✅ |
+| `main.py golddata` | `golddata_fhir_bundles/` | 8096 | prior ✅ / latest ❌ | prior ✅ / latest ❌ | prior ✅ / latest ❌ | prior ✅ / latest ❌ | ✅ |
+| `main.py testing` | `testing/` | 8097 | prior ✅ / latest ❌ | prior ✅ / latest ❌ | prior ✅ / latest ❌ | ✅ all | ✅ |
 
 **Full** — complete clinical record for every encounter, no blinding.  
-**GoldData** — latest hospital encounter and latest ED stay are blinded: ICD diagnoses, medications, and notes removed from the most recent visit only. All prior encounters remain intact.  
+**GoldData** — latest hospital encounter and latest ED stay are blinded: ICD diagnoses, procedures, medications, and notes removed from the most recent visit only. All prior encounters remain intact.  
 **Testing** — same blind as GoldData but the latest encounter's clinical notes (DocumentReference) are restored, making it useful for LLM evaluation where notes are the input.
 
 ---
@@ -95,10 +95,10 @@ python main.py reindex
 ### 4. Generate FHIR bundles
 
 ```bash
-# All three pipelines on the same 5 random patients (recommended)
+# All three pipelines on the same 100 random patients (recommended)
 python main.py all
 
-# Or individually (20 random patients each by default)
+# Or individually (100 random patients each by default)
 python main.py bundle    # → fhir_bundles/
 python main.py golddata  # → golddata_fhir_bundles/
 python main.py testing   # → testing/
@@ -131,7 +131,7 @@ Subcommands:
 Common batch options (bundle / golddata / testing / all):
   --dsn              Override PostgreSQL DSN
   --output           Override output directory
-  --limit N          Number of patients (default: 20 for individual; 5 for all)
+  --limit N          Number of patients (default: 100)
   --offset N         Skip first N patients (sequential mode only)
   --subject-ids      Comma-separated list of specific subject IDs
   --random           Random patient sample, default ON (use --no-random for sequential)
@@ -159,7 +159,7 @@ load-specific options:
 | `ed.pyxis` | `MedicationDispense` (ED) | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
 | `icu.inputevents` | `MedicationAdministration` (ICU) | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
 | `icu.ingredientevents` | `MedicationAdministration` (ICU) | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `hosp.procedures_icd` | `Procedure` | ✓ | ✓ | ✓ |
+| `hosp.procedures_icd` | `Procedure` | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
 | `hosp.labevents` | `Observation` (laboratory) | ✓ | ✓ | ✓ |
 | `icu.chartevents` | `Observation` (vital-signs) | ✓ | ✓ | ✓ |
 | `icu.procedureevents` | `Observation` (ICU procedure) | ✓ | ✓ | ✓ |

@@ -22,6 +22,7 @@
 │                 │  │                 │  │                 │
 │  Latest encounter│  │Latest encounter │  │Latest encounter │
 │  Conditions  ✓  │  │Conditions  ✗    │  │Conditions  ✗    │
+│  Procedures  ✓  │  │Procedures  ✗    │  │Procedures  ✗    │
 │  Medications ✓  │  │Medications ✗    │  │Medications ✗    │
 │  Notes       ✓  │  │Notes       ✗    │  │Notes       ✓    │
 │  Vitals/Labs ✓  │  │Vitals/Labs ✓    │  │Vitals/Labs ✓    │
@@ -58,7 +59,7 @@ python main.py load
 python main.py reindex
 # Takes 10–30 minutes on the full dataset. Safe to skip on the demo dataset.
 
-# ── Step 4: Generate all three bundle sets from the same 5 random patients ──
+# ── Step 4: Generate all three bundle sets from the same 100 random patients ─
 python main.py all
 # Output:
 #   fhir_bundles/              ← Full (all data, no blinding)
@@ -73,9 +74,9 @@ uvicorn web.testing_app:app  --host 0.0.0.0 --port 8097 --reload
 
 | URL                     | Pipeline | Latest Conditions | Latest Meds | Notes |
 | ----------------------- | -------- | :---------------: | :---------: | :---: |
-| <http://localhost:8095> | Full     | ✓                 | ✓           | ✓     |
-| <http://localhost:8096> | GoldData | ✗                 | ✗           | ✗     |
-| <http://localhost:8097> | Testing  | ✗                 | ✗           | ✓     |
+| <http://localhost:8095> | Full     |         ✓         |      ✓      |   ✓   |
+| <http://localhost:8096> | GoldData |         ✗         |      ✗      |   ✗   |
+| <http://localhost:8097> | Testing  |         ✗         |      ✗      |   ✓   |
 
 ---
 
@@ -111,7 +112,7 @@ to all three generators. This guarantees identical patient cohorts across
 `fhir_bundles/`, `golddata_fhir_bundles/`, and `testing/`.
 
 ```bash
-# Default: 5 random patients
+# Default: 100 random patients
 python main.py all
 
 # Custom count
@@ -152,7 +153,7 @@ without indexes, per-patient queries on `icu.chartevents` (432M rows) are very s
 ### Full FHIR bundles
 
 ```bash
-python main.py bundle                        # 20 random patients (default)
+python main.py bundle                        # 100 random patients (default)
 python main.py bundle --limit 50
 python main.py bundle --no-random --limit 100
 python main.py bundle --subject-ids 10000032,10000084
@@ -169,9 +170,9 @@ python main.py golddata --subject-ids 10000032,10000084
 ```
 
 Output → `golddata_fhir_bundles/` — latest encounter is blinded: no `Condition`,
-no `MedicationRequest`, no `MedicationStatement` (ED), no `MedicationDispense` (ED),
-no `MedicationAdministration` (ICU), no `DocumentReference`. All prior encounters
-are fully included.
+no `Procedure`, no `MedicationRequest`, no `MedicationStatement` (ED),
+no `MedicationDispense` (ED), no `MedicationAdministration` (ICU),
+no `DocumentReference`. All prior encounters are fully included.
 
 ### Testing FHIR bundles
 
@@ -197,46 +198,46 @@ uvicorn web.testing_app:app  --host 0.0.0.0 --port 8097 --reload
 
 ## Environment Variables
 
-| Variable         | Default                                                         |
-| ---------------- | --------------------------------------------------------------- |
+| Variable         | Default                                                             |
+| ---------------- | ------------------------------------------------------------------- |
 | `MIMIC_DSN`      | `host=localhost port=5433 dbname=mimiciv user=mimic password=mimic` |
-| `MIMIC_DATA_DIR` | `dataset/`                                                      |
-| `MIMIC_NOTE_DIR` | `dataset/note/`                                                 |
-| `GOLDDATA_OUT`   | `golddata_fhir_bundles`                                         |
-| `TESTING_OUT`    | `testing`                                                       |
+| `MIMIC_DATA_DIR` | `dataset/`                                                          |
+| `MIMIC_NOTE_DIR` | `dataset/note/`                                                     |
+| `GOLDDATA_OUT`   | `golddata_fhir_bundles`                                             |
+| `TESTING_OUT`    | `testing`                                                           |
 
 ---
 
 ## What Each Bundle Contains
 
-| Resource type | Source | Full | GoldData | Testing |
-| --- | --- | :---: | :---: | :---: |
-| `Patient` | hosp.patients | ✓ | ✓ | ✓ |
-| `Encounter` (hospital) | hosp.admissions | ✓ | ✓ | ✓ |
-| `Encounter` (ICU) | icu.icustays | ✓ | ✓ | ✓ |
-| `Encounter` (ED) | ed.edstays | ✓ | ✓ | ✓ |
-| `Condition` (hospital) | hosp.diagnoses_icd | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `Condition` (ED) | ed.diagnosis | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `MedicationRequest` | hosp.prescriptions | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `MedicationStatement` | ed.medrecon | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `MedicationDispense` | ed.pyxis | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `MedicationAdministration` | icu.inputevents | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `MedicationAdministration` | icu.ingredientevents | ✓ | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
-| `Procedure` | hosp.procedures_icd | ✓ | ✓ | ✓ |
-| `Observation` (labs) | hosp.labevents | ✓ | ✓ | ✓ |
-| `Observation` (ICU vitals) | icu.chartevents | ✓ | ✓ | ✓ |
-| `Observation` (ICU procedure) | icu.procedureevents | ✓ | ✓ | ✓ |
-| `Observation` (ICU datetime) | icu.datetimeevents | ✓ | ✓ | ✓ |
-| `Observation` (ICU output) | icu.outputevents | ✓ | ✓ | ✓ |
-| `Observation` (OMR survey) | hosp.omr | ✓ | ✓ | ✓ |
-| `Observation` (ED triage) | ed.triage | ✓ | ✓ | ✓ |
-| `Observation` (ED vitals) | ed.vitalsign | ✓ | ✓ | ✓ |
-| `DiagnosticReport` | hosp.microbiologyevents | ✓ | ✓ | ✓ |
-| `Claim` + `ExplanationOfBenefit` | hosp.drgcodes | ✓ | ✓ | ✓ |
-| `Practitioner` | hosp.provider | ✓ | ✓ | ✓ |
-| `Practitioner` (ICU caregiver) | icu.caregivers | ✓ | ✓ | ✓ |
-| `DocumentReference` (discharge) | note.discharge | ✓ | prior ✓ / latest ✗ | ✓ |
-| `DocumentReference` (radiology) | note.radiology | ✓ | prior ✓ / latest ✗ | ✓ |
+| Resource type                    | Source                  | Full |      GoldData      |      Testing       |
+| -------------------------------- | ----------------------- | :--: | :----------------: | :----------------: |
+| `Patient`                        | hosp.patients           |  ✓   |         ✓          |         ✓          |
+| `Encounter` (hospital)           | hosp.admissions         |  ✓   |         ✓          |         ✓          |
+| `Encounter` (ICU)                | icu.icustays            |  ✓   |         ✓          |         ✓          |
+| `Encounter` (ED)                 | ed.edstays              |  ✓   |         ✓          |         ✓          |
+| `Condition` (hospital)           | hosp.diagnoses_icd      |  ✓   | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
+| `Condition` (ED)                 | ed.diagnosis            |  ✓   | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
+| `MedicationRequest`              | hosp.prescriptions      |  ✓   | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
+| `MedicationStatement`            | ed.medrecon             |  ✓   | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
+| `MedicationDispense`             | ed.pyxis                |  ✓   | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
+| `MedicationAdministration`       | icu.inputevents         |  ✓   | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
+| `MedicationAdministration`       | icu.ingredientevents    |  ✓   | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
+| `Procedure`                      | hosp.procedures_icd     |  ✓   | prior ✓ / latest ✗ | prior ✓ / latest ✗ |
+| `Observation` (labs)             | hosp.labevents          |  ✓   |         ✓          |         ✓          |
+| `Observation` (ICU vitals)       | icu.chartevents         |  ✓   |         ✓          |         ✓          |
+| `Observation` (ICU procedure)    | icu.procedureevents     |  ✓   |         ✓          |         ✓          |
+| `Observation` (ICU datetime)     | icu.datetimeevents      |  ✓   |         ✓          |         ✓          |
+| `Observation` (ICU output)       | icu.outputevents        |  ✓   |         ✓          |         ✓          |
+| `Observation` (OMR survey)       | hosp.omr                |  ✓   |         ✓          |         ✓          |
+| `Observation` (ED triage)        | ed.triage               |  ✓   |         ✓          |         ✓          |
+| `Observation` (ED vitals)        | ed.vitalsign            |  ✓   |         ✓          |         ✓          |
+| `DiagnosticReport`               | hosp.microbiologyevents |  ✓   |         ✓          |         ✓          |
+| `Claim` + `ExplanationOfBenefit` | hosp.drgcodes           |  ✓   |         ✓          |         ✓          |
+| `Practitioner`                   | hosp.provider           |  ✓   |         ✓          |         ✓          |
+| `Practitioner` (ICU caregiver)   | icu.caregivers          |  ✓   |         ✓          |         ✓          |
+| `DocumentReference` (discharge)  | note.discharge          |  ✓   | prior ✓ / latest ✗ |         ✓          |
+| `DocumentReference` (radiology)  | note.radiology          |  ✓   | prior ✓ / latest ✗ |         ✓          |
 
 ---
 

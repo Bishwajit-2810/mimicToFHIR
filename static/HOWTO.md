@@ -10,7 +10,7 @@ From the project root:
 # Full dashboard — complete clinical data (port 8095)
 uvicorn web.app:app --host 0.0.0.0 --port 8095 --reload
 
-# GoldData dashboard — latest encounter blinded: no diagnoses, no medications, no notes (port 8096)
+# GoldData dashboard — latest encounter blinded: no diagnoses, no procedures, no medications, no notes (port 8096)
 uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
 
 # Testing dashboard — latest encounter blinded + notes restored (port 8097)
@@ -39,13 +39,13 @@ A coloured banner appears below the patient info bar on every page. It identifie
 which pipeline is active and shows inclusion chips for each resource type:
 
 - **Blue banner** — Full pipeline (all data, no blinding)
-- **Amber banner** — GoldData pipeline (latest encounter blinded: vitals/labs/procedures only)
+- **Amber banner** — GoldData pipeline (latest encounter blinded: vitals/labs only; no conditions, procedures, medications, or notes)
 - **Green banner** — Testing pipeline (latest encounter blinded + clinical notes)
 
 Each chip is green when that resource type is included for the latest encounter,
-or grey with strikethrough when excluded. Conditions and Medications chips will
-show as excluded on the GoldData and Testing dashboards — this is correct and
-expected for the most recent visit.
+or grey with strikethrough when excluded. Conditions, Procedures, and Medications
+chips will show as excluded on the GoldData and Testing dashboards — this is
+correct and expected for the most recent visit.
 
 ---
 
@@ -138,7 +138,7 @@ Latest encounter diagnoses are absent on GoldData and Testing.
 Latest encounter prescriptions are absent on GoldData and Testing.
 
 **Procedures Performed** — all `Procedure` resources with ICD descriptions and dates.
-Procedures are always shown on all three dashboards.
+Latest encounter procedures are absent on GoldData and Testing (prior encounter procedures are shown).
 
 ---
 
@@ -208,7 +208,7 @@ curl http://localhost:8095/api/info
 
 ## Performance Notes
 
-- Parsed bundles are cached in memory (LRU, 20 patients). Switching between
+- Parsed bundles are cached in memory (LRU, 15–20 patients per dashboard). Switching between
   recently viewed patients is instant.
 - The first load of a patient parses their full FHIR bundle from disk.
 - No running database is required — dashboards read static JSON files only.

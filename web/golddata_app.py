@@ -37,14 +37,14 @@ _running: dict[str, dict] = {}
 _DATASET_INFO = {
     "mode": "golddata",
     "label": "Gold Data (Blind)",
-    "description": "Blind dataset — no diagnoses, no medications, no clinical notes",
+    "description": "Blind dataset — latest encounter: no diagnoses, no procedures, no medications, no clinical notes",
     "includes": {
         "conditions": False,
         "medications": False,
         "notes": False,
         "vitals": True,
         "labs": True,
-        "procedures": True,
+        "procedures": False,
         "encounters": True,
     },
     "color": "#f59e0b",

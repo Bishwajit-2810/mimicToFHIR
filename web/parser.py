@@ -589,7 +589,7 @@ def parse_bundle(bundle: dict) -> dict:
         recent_id = encs[0]["id"]
         primary = next(
             (c for c in conds if c["encounterRef"] == recent_id),
-            conds[0] if conds else None,
+            None,
         )
         if primary:
             chief = primary["name"]

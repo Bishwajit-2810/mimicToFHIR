@@ -10,7 +10,7 @@ INCLUDED (same as golddata — all encounters):
     • Encounter          — hospital, ICU, ED
     • Observation        — ICU vitals, labs, OMR, ICU procedure events,
                            ED triage, ED vitalsigns
-    • Procedure          — ICD-coded procedures
+    • Procedure          — ICD-coded procedures (prior encounters only)
     • DiagnosticReport   — microbiology
     • Claim + ExplanationOfBenefit
     • Condition          — hosp + ED diagnoses for all prior encounters
@@ -24,6 +24,7 @@ INCLUDED ADDITIONALLY vs golddata (latest encounter unblinded for notes):
 
 EXCLUDED (latest encounter only — blinded target):
     • Condition          — latest hosp + latest ED diagnoses
+    • Procedure          — latest hosp ICD procedures
     • MedicationRequest  — latest hosp prescriptions
     • MedicationStatement — latest ED medrecon
     • MedicationDispense — latest ED Pyxis dispenses

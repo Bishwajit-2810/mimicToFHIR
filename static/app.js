@@ -330,7 +330,7 @@ function renderComplaint(d) {
   const encId       = enc?.id;
   const encDiags    = encId
     ? d.conditions.filter(c => c.encounterRef === encId)
-    : d.conditions.slice(0, 5);
+    : d.conditions;
 
   primaryDiag.innerHTML = encDiags.length
     ? encDiags.map(c => `
@@ -749,38 +749,32 @@ function encClinicalNote(enc, ed) {
   const activeMeds   = medications.filter(m => m.status !== "stopped");
   const abnVitals    = vitals.filter(v => v.status === "abnormal");
 
-  const dxLines = conditions.slice(0, 4).map((c, i) =>
+  const dxLines = conditions.map((c, i) =>
     `<span class="enc-note-dx-item">${i + 1}. ${esc(c.name)}${c.code ? ` <span class="enc-note-code">(${esc(c.code)})</span>` : ""}</span>`
   ).join("");
-  const moreDx = conditions.length > 4
-    ? `<span class="enc-note-dx-item enc-note-more">+${conditions.length - 4} more diagnoses</span>`
-    : "";
 
-  const medLines = activeMeds.slice(0, 4).map(m =>
+  const medLines = activeMeds.map(m =>
     `<span class="enc-note-med-item">
       <i class="fas fa-circle" style="color:#c084fc;font-size:0.45rem;margin-top:0.35rem;flex-shrink:0;"></i>
       ${esc(m.name)}${m.dose ? ` — <span style="color:#6e7681;">${esc(m.dose)}</span>` : ""}
      </span>`
   ).join("");
-  const moreMeds = activeMeds.length > 4
-    ? `<span class="enc-note-med-item" style="color:#484f58;">+${activeMeds.length - 4} more medications</span>`
-    : "";
 
   let labSummary = `${labs.length} total`;
   if (abnormalLabs.length) labSummary += `, <span style="color:#f85149;font-weight:600;">${abnormalLabs.length} abnormal</span>`;
   if (criticalLabs.length) {
-    const critNames = criticalLabs.slice(0, 2).map(l => esc(l.name)).join(", ");
-    labSummary += ` — critical: <span style="color:#f85149;">${critNames}${criticalLabs.length > 2 ? ` +${criticalLabs.length - 2} more` : ""}</span>`;
+    const critNames = criticalLabs.map(l => esc(l.name)).join(", ");
+    labSummary += ` — critical: <span style="color:#f85149;">${critNames}</span>`;
   }
 
-  const procLines = procedures.slice(0, 3).map(p =>
+  const procLines = procedures.map(p =>
     `<span class="enc-note-proc-item">
       <i class="fas fa-circle" style="color:#4ade80;font-size:0.45rem;margin-top:0.35rem;flex-shrink:0;"></i>
       ${esc(p.name)}
      </span>`
   ).join("");
 
-  const rptLines = reports.slice(0, 4).map(r =>
+  const rptLines = reports.map(r =>
     `<span class="enc-note-rpt-item">
       <i class="fas fa-circle" style="color:#38bdf8;font-size:0.45rem;margin-top:0.35rem;flex-shrink:0;"></i>
       <span>
@@ -791,9 +785,6 @@ function encClinicalNote(enc, ed) {
       </span>
      </span>`
   ).join("");
-  const moreRpts = reports.length > 4
-    ? `<span class="enc-note-rpt-item" style="color:#484f58;">+${reports.length - 4} more reports</span>`
-    : "";
 
   return `
   <div class="enc-note-card">
@@ -812,13 +803,13 @@ function encClinicalNote(enc, ed) {
       ${conditions.length ? `
       <div class="enc-note-section">
         <div class="enc-note-label"><i class="fas fa-stethoscope" style="color:#fb7185;"></i> Diagnoses (${conditions.length})</div>
-        <div class="enc-note-dx-list">${dxLines}${moreDx}</div>
+        <div class="enc-note-dx-list">${dxLines}</div>
       </div>` : ""}
 
       ${activeMeds.length ? `
       <div class="enc-note-section">
         <div class="enc-note-label"><i class="fas fa-pills" style="color:#c084fc;"></i> Active Medications (${activeMeds.length})</div>
-        <div class="enc-note-med-list">${medLines}${moreMeds}</div>
+        <div class="enc-note-med-list">${medLines}</div>
       </div>` : ""}
 
       ${labs.length ? `
@@ -830,13 +821,13 @@ function encClinicalNote(enc, ed) {
       ${reports.length ? `
       <div class="enc-note-section">
         <div class="enc-note-label"><i class="fas fa-vial-circle-check" style="color:#38bdf8;"></i> Microbiology / Reports (${reports.length})</div>
-        <div class="enc-note-rpt-list">${rptLines}${moreRpts}</div>
+        <div class="enc-note-rpt-list">${rptLines}</div>
       </div>` : ""}
 
       ${procedures.length ? `
       <div class="enc-note-section">
         <div class="enc-note-label"><i class="fas fa-syringe" style="color:#4ade80;"></i> Procedures (${procedures.length})</div>
-        <div class="enc-note-proc-list">${procLines}${procedures.length > 3 ? `<span class="enc-note-proc-item" style="color:#484f58;">+${procedures.length - 3} more</span>` : ""}</div>
+        <div class="enc-note-proc-list">${procLines}</div>
       </div>` : ""}
 
       ${vitals.length ? `
