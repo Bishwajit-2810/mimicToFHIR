@@ -39,3 +39,6 @@ uvicorn.log
 # Secrets / local config
 .env.local
 secrets.yml
+
+dataset/
+golddata_fhir_bundles/
