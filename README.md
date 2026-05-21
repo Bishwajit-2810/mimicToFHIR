@@ -11,10 +11,10 @@ transaction bundles, and serves them through two independent web dashboards.
 
 ## Two Pipelines
 
-| Pipeline | Output dir | Port | Conditions | Procedures | Medications | Notes | Vitals / Labs |
-| --- | --- | --- | :---: | :---: | :---: | :---: | :---: |
-| `main.py bundle` | `fhir_bundles/` | 8095 | ✅ all | ✅ all | ✅ all | ✅ all | ✅ |
-| `main.py golddata` | `golddata_fhir_bundles/` | 8096 | prior ✅ / latest ❌ | prior ✅ / latest ❌ | prior ✅ / latest ❌ | prior ✅ / latest ❌ | ✅ |
+| Pipeline           | Output dir               | Port |      Conditions      |      Procedures      |     Medications      |        Notes         | Vitals / Labs |
+| ------------------ | ------------------------ | ---- | :------------------: | :------------------: | :------------------: | :------------------: | :-----------: |
+| `main.py bundle`   | `fhir_bundles/`          | 8095 |        ✅ all        |        ✅ all        |        ✅ all        |        ✅ all        |      ✅       |
+| `main.py golddata` | `golddata_fhir_bundles/` | 8096 | prior ✅ / latest ❌ | prior ✅ / latest ❌ | prior ✅ / latest ❌ | prior ✅ / latest ❌ |      ✅       |
 
 **Full** — complete clinical record for every encounter, no blinding.  
 **GoldData** — latest hospital encounter and latest ED stay are blinded: ICD diagnoses, procedures, medications, and notes removed from the most recent visit only. All prior encounters remain intact.
@@ -23,15 +23,66 @@ transaction bundles, and serves them through two independent web dashboards.
 
 ## Dataset Overview
 
-| Module | Tables | Key content |
-|---|---|---|
-| `hosp` | 22 | Admissions, diagnoses, labs, medications, microbiology, orders, OMR |
-| `icu` | 9 | ICU stays, chart events, inputs/outputs, datetime events, procedure events |
-| `ed` | 6 | ED stays, triage, vital signs, diagnoses, medication reconciliation, Pyxis dispenses |
-| `note` | 4 | Discharge summaries + detail · Radiology reports + detail |
+| Module | Tables | Key content                                                                          |
+| ------ | ------ | ------------------------------------------------------------------------------------ |
+| `hosp` | 22     | Admissions, diagnoses, labs, medications, microbiology, orders, OMR                  |
+| `icu`  | 9      | ICU stays, chart events, inputs/outputs, datetime events, procedure events           |
+| `ed`   | 6      | ED stays, triage, vital signs, diagnoses, medication reconciliation, Pyxis dispenses |
+| `note` | 4      | Discharge summaries + detail · Radiology reports + detail                            |
 
 **Full dataset:** 364K patients · 5.7 GB compressed · ~50 GB uncompressed.  
 **Demo dataset:** 100 patients · included in `dataset/`.
+
+### Dataset Directory Layout
+
+```text
+dataset/
+├── ed/
+│   ├── diagnosis.csv.gz
+│   ├── edstays.csv.gz
+│   ├── medrecon.csv.gz
+│   ├── pyxis.csv.gz
+│   ├── triage.csv.gz
+│   └── vitalsign.csv.gz
+├── hosp/
+│   ├── admissions.csv.gz
+│   ├── d_hcpcs.csv.gz
+│   ├── d_icd_diagnoses.csv.gz
+│   ├── d_icd_procedures.csv.gz
+│   ├── d_labitems.csv.gz
+│   ├── diagnoses_icd.csv.gz
+│   ├── drgcodes.csv.gz
+│   ├── emar.csv.gz
+│   ├── emar_detail.csv.gz
+│   ├── hcpcsevents.csv.gz
+│   ├── labevents.csv.gz
+│   ├── microbiologyevents.csv.gz
+│   ├── omr.csv.gz
+│   ├── patients.csv.gz
+│   ├── pharmacy.csv.gz
+│   ├── poe.csv.gz
+│   ├── poe_detail.csv.gz
+│   ├── prescriptions.csv.gz
+│   ├── procedures_icd.csv.gz
+│   ├── provider.csv.gz
+│   ├── services.csv.gz
+│   └── transfers.csv.gz
+├── icu/
+│   ├── caregiver.csv.gz
+│   ├── chartevents.csv.gz
+│   ├── d_items.csv.gz
+│   ├── datetimeevents.csv.gz
+│   ├── icustays.csv.gz
+│   ├── ingredientevents.csv.gz
+│   ├── inputevents.csv.gz
+│   ├── outputevents.csv.gz
+│   └── procedureevents.csv.gz
+└── note/
+    ├── discharge.csv.gz
+    ├── discharge_detail.csv.gz
+    ├── radiology.csv.gz
+    └── radiology_detail.csv.gz
+```
 
 ---
 
@@ -39,8 +90,8 @@ transaction bundles, and serves them through two independent web dashboards.
 
 Both pipelines share one PostgreSQL container. Load data once.
 
-| Container | Port | Default DSN |
-|---|---|---|
+| Container  | Port | Default DSN                                                         |
+| ---------- | ---- | ------------------------------------------------------------------- |
 | `mimic_pg` | 5433 | `host=localhost port=5433 dbname=mimiciv user=mimic password=mimic` |
 
 ---
@@ -141,34 +192,34 @@ load-specific options:
 
 ## FHIR Resource Mappings
 
-| MIMIC-IV source | FHIR R4 resource | bundle | golddata |
-|---|---|:---:|:---:|
-| `hosp.patients` | `Patient` | ✓ | ✓ |
-| `hosp.admissions` | `Encounter` (hospital) | ✓ | ✓ |
-| `icu.icustays` | `Encounter` (ICU) | ✓ | ✓ |
-| `ed.edstays` | `Encounter` (ED) | ✓ | ✓ |
-| `hosp.diagnoses_icd` | `Condition` (hospital) | ✓ | prior ✓ / latest ✗ |
-| `ed.diagnosis` | `Condition` (ED) | ✓ | prior ✓ / latest ✗ |
-| `hosp.prescriptions` | `MedicationRequest` | ✓ | prior ✓ / latest ✗ |
-| `ed.medrecon` | `MedicationStatement` (ED) | ✓ | prior ✓ / latest ✗ |
-| `ed.pyxis` | `MedicationDispense` (ED) | ✓ | prior ✓ / latest ✗ |
-| `icu.inputevents` | `MedicationAdministration` (ICU) | ✓ | prior ✓ / latest ✗ |
-| `icu.ingredientevents` | `MedicationAdministration` (ICU) | ✓ | prior ✓ / latest ✗ |
-| `hosp.procedures_icd` | `Procedure` | ✓ | prior ✓ / latest ✗ |
-| `hosp.labevents` | `Observation` (laboratory) | ✓ | ✓ |
-| `icu.chartevents` | `Observation` (vital-signs) | ✓ | ✓ |
-| `icu.procedureevents` | `Observation` (ICU procedure) | ✓ | ✓ |
-| `icu.datetimeevents` | `Observation` (ICU datetime) | ✓ | ✓ |
-| `icu.outputevents` | `Observation` (ICU output) | ✓ | ✓ |
-| `hosp.omr` | `Observation` (survey) | ✓ | ✓ |
-| `ed.triage` | `Observation` (ED triage) | ✓ | ✓ |
-| `ed.vitalsign` | `Observation` (ED vitals) | ✓ | ✓ |
-| `hosp.microbiologyevents` | `DiagnosticReport` + `Observation` | ✓ | ✓ |
-| `hosp.drgcodes` | `Claim` + `ExplanationOfBenefit` | ✓ | ✓ |
-| `hosp.provider` | `Practitioner` | ✓ | ✓ |
-| `icu.caregivers` | `Practitioner` (ICU) | ✓ | ✓ |
-| `note.discharge` + `discharge_detail` | `DocumentReference` (discharge) | ✓ | prior ✓ / latest ✗ |
-| `note.radiology` + `radiology_detail` | `DocumentReference` (radiology) | ✓ | prior ✓ / latest ✗ |
+| MIMIC-IV source                       | FHIR R4 resource                   | bundle |      golddata      |
+| ------------------------------------- | ---------------------------------- | :----: | :----------------: |
+| `hosp.patients`                       | `Patient`                          |   ✓    |         ✓          |
+| `hosp.admissions`                     | `Encounter` (hospital)             |   ✓    |         ✓          |
+| `icu.icustays`                        | `Encounter` (ICU)                  |   ✓    |         ✓          |
+| `ed.edstays`                          | `Encounter` (ED)                   |   ✓    |         ✓          |
+| `hosp.diagnoses_icd`                  | `Condition` (hospital)             |   ✓    | prior ✓ / latest ✗ |
+| `ed.diagnosis`                        | `Condition` (ED)                   |   ✓    | prior ✓ / latest ✗ |
+| `hosp.prescriptions`                  | `MedicationRequest`                |   ✓    | prior ✓ / latest ✗ |
+| `ed.medrecon`                         | `MedicationStatement` (ED)         |   ✓    | prior ✓ / latest ✗ |
+| `ed.pyxis`                            | `MedicationDispense` (ED)          |   ✓    | prior ✓ / latest ✗ |
+| `icu.inputevents`                     | `MedicationAdministration` (ICU)   |   ✓    | prior ✓ / latest ✗ |
+| `icu.ingredientevents`                | `MedicationAdministration` (ICU)   |   ✓    | prior ✓ / latest ✗ |
+| `hosp.procedures_icd`                 | `Procedure`                        |   ✓    | prior ✓ / latest ✗ |
+| `hosp.labevents`                      | `Observation` (laboratory)         |   ✓    |         ✓          |
+| `icu.chartevents`                     | `Observation` (vital-signs)        |   ✓    |         ✓          |
+| `icu.procedureevents`                 | `Observation` (ICU procedure)      |   ✓    |         ✓          |
+| `icu.datetimeevents`                  | `Observation` (ICU datetime)       |   ✓    |         ✓          |
+| `icu.outputevents`                    | `Observation` (ICU output)         |   ✓    |         ✓          |
+| `hosp.omr`                            | `Observation` (survey)             |   ✓    |         ✓          |
+| `ed.triage`                           | `Observation` (ED triage)          |   ✓    |         ✓          |
+| `ed.vitalsign`                        | `Observation` (ED vitals)          |   ✓    |         ✓          |
+| `hosp.microbiologyevents`             | `DiagnosticReport` + `Observation` |   ✓    |         ✓          |
+| `hosp.drgcodes`                       | `Claim` + `ExplanationOfBenefit`   |   ✓    |         ✓          |
+| `hosp.provider`                       | `Practitioner`                     |   ✓    |         ✓          |
+| `icu.caregivers`                      | `Practitioner` (ICU)               |   ✓    |         ✓          |
+| `note.discharge` + `discharge_detail` | `DocumentReference` (discharge)    |   ✓    | prior ✓ / latest ✗ |
+| `note.radiology` + `radiology_detail` | `DocumentReference` (radiology)    |   ✓    | prior ✓ / latest ✗ |
 
 > **"latest" blinding** applies to the most recent hospital admission (`latest_hadm`) and
 > the most recent ED stay (`latest_ed_stay`). All prior encounters are always included.  
@@ -182,13 +233,13 @@ load-specific options:
 Both dashboards share the same `static/` UI. A coloured dataset banner at
 the top identifies which pipeline is active and which resources are included.
 
-| Tab | Contents |
-|---|---|
-| **Patient Overview** | Demographics · Vitals (colour-coded) · Medications · Past medical history · Tests · Lab table |
-| **Chief Complaint** | Primary reason for most recent visit · Admission details · Linked diagnoses |
-| **Diagnosis & Treatment** | Ranked ICD conditions · Medications · Procedures performed |
-| **Encounters** | Collapsible timeline of all hospital + ICU + ED visits · per-encounter vitals, labs, notes |
-| **Clinical Notes** | Discharge summaries · Radiology reports · Searchable full text |
+| Tab                       | Contents                                                                                      |
+| ------------------------- | --------------------------------------------------------------------------------------------- |
+| **Patient Overview**      | Demographics · Vitals (colour-coded) · Medications · Past medical history · Tests · Lab table |
+| **Chief Complaint**       | Primary reason for most recent visit · Admission details · Linked diagnoses                   |
+| **Diagnosis & Treatment** | Ranked ICD conditions · Medications · Procedures performed                                    |
+| **Encounters**            | Collapsible timeline of all hospital + ICU + ED visits · per-encounter vitals, labs, notes    |
+| **Clinical Notes**        | Discharge summaries · Radiology reports · Searchable full text                                |
 
 Conditions and Medications sections show "No data recorded" for the latest
 encounter on GoldData bundles — this is correct and expected.
@@ -197,22 +248,22 @@ encounter on GoldData bundles — this is correct and expected.
 
 ## Output Directories
 
-| Directory | Pipeline | Contents |
-|---|---|---|
-| `fhir_bundles/` | bundle | One JSON per patient — full clinical data, no blinding |
-| `golddata_fhir_bundles/` | golddata | One JSON per patient — latest encounter blinded |
-| `fhir_output/` | convert | Flat NDJSON per resource type (optional) |
+| Directory                | Pipeline | Contents                                               |
+| ------------------------ | -------- | ------------------------------------------------------ |
+| `fhir_bundles/`          | bundle   | One JSON per patient — full clinical data, no blinding |
+| `golddata_fhir_bundles/` | golddata | One JSON per patient — latest encounter blinded        |
+| `fhir_output/`           | convert  | Flat NDJSON per resource type (optional)               |
 
 ---
 
 ## Environment Variables
 
-| Variable | Default | Used by |
-|---|---|---|
-| `MIMIC_DSN` | `host=localhost port=5433 dbname=mimiciv user=mimic password=mimic` | all pipelines |
-| `MIMIC_DATA_DIR` | `dataset/` | load — hosp/, icu/, ed/ parent directory |
-| `MIMIC_NOTE_DIR` | `dataset/note/` | load — note CSV directory |
-| `GOLDDATA_OUT` | `golddata_fhir_bundles` | golddata output directory |
+| Variable         | Default                                                             | Used by                                  |
+| ---------------- | ------------------------------------------------------------------- | ---------------------------------------- |
+| `MIMIC_DSN`      | `host=localhost port=5433 dbname=mimiciv user=mimic password=mimic` | all pipelines                            |
+| `MIMIC_DATA_DIR` | `dataset/`                                                          | load — hosp/, icu/, ed/ parent directory |
+| `MIMIC_NOTE_DIR` | `dataset/note/`                                                     | load — note CSV directory                |
+| `GOLDDATA_OUT`   | `golddata_fhir_bundles`                                             | golddata output directory                |
 
 ---
 
@@ -256,11 +307,11 @@ encounter on GoldData bundles — this is correct and expected.
 
 The full MIMIC-IV dataset has 888 million rows. Key tables:
 
-| Table | Rows | Notes |
-|---|---|---|
-| `icu.chartevents` | 432 M | Composite index on `(subject_id, itemid)` |
-| `hosp.labevents` | 158 M | Composite index on `(subject_id, charttime DESC)` |
-| `hosp.emar_detail` | 54 M | Index on `subject_id` |
+| Table              | Rows  | Notes                                             |
+| ------------------ | ----- | ------------------------------------------------- |
+| `icu.chartevents`  | 432 M | Composite index on `(subject_id, itemid)`         |
+| `hosp.labevents`   | 158 M | Composite index on `(subject_id, charttime DESC)` |
+| `hosp.emar_detail` | 54 M  | Index on `subject_id`                             |
 
 Always run `python main.py reindex` after loading. Without indexes, generating
 one patient bundle can take several minutes instead of milliseconds.
