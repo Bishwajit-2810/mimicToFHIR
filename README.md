@@ -14,7 +14,7 @@ transaction bundles, and serves them through two independent web dashboards.
 | Pipeline           | Output dir               | Port |      Conditions      |      Procedures      |     Medications      |        Notes         | Vitals / Labs |
 | ------------------ | ------------------------ | ---- | :------------------: | :------------------: | :------------------: | :------------------: | :-----------: |
 | `main.py bundle`   | `fhir_bundles/`          | 8095 |        ✅ all        |        ✅ all        |        ✅ all        |        ✅ all        |      ✅       |
-| `main.py golddata` | `golddata_fhir_bundles/` | 8096 | prior ✅ / latest ❌ | prior ✅ / latest ❌ | prior ✅ / latest ❌ | prior ✅ / latest ❌ |      ✅       |
+| `main.py golddata` | `golddata_fhir_bundles/` | 8096 | prior ✅ + latest ❌ | prior ✅ + latest ❌ | prior ✅ + latest ❌ | prior ✅ + latest ❌ |      ✅       |
 
 **Full** — complete clinical record for every encounter, no blinding.  
 **GoldData** — latest hospital encounter and latest ED stay are blinded: ICD diagnoses, procedures, medications, and notes removed from the most recent visit only. All prior encounters remain intact.
@@ -198,14 +198,14 @@ load-specific options:
 | `hosp.admissions`                     | `Encounter` (hospital)             |   ✓    |         ✓          |
 | `icu.icustays`                        | `Encounter` (ICU)                  |   ✓    |         ✓          |
 | `ed.edstays`                          | `Encounter` (ED)                   |   ✓    |         ✓          |
-| `hosp.diagnoses_icd`                  | `Condition` (hospital)             |   ✓    | prior ✓ / latest ✗ |
-| `ed.diagnosis`                        | `Condition` (ED)                   |   ✓    | prior ✓ / latest ✗ |
-| `hosp.prescriptions`                  | `MedicationRequest`                |   ✓    | prior ✓ / latest ✗ |
-| `ed.medrecon`                         | `MedicationStatement` (ED)         |   ✓    | prior ✓ / latest ✗ |
-| `ed.pyxis`                            | `MedicationDispense` (ED)          |   ✓    | prior ✓ / latest ✗ |
-| `icu.inputevents`                     | `MedicationAdministration` (ICU)   |   ✓    | prior ✓ / latest ✗ |
-| `icu.ingredientevents`                | `MedicationAdministration` (ICU)   |   ✓    | prior ✓ / latest ✗ |
-| `hosp.procedures_icd`                 | `Procedure`                        |   ✓    | prior ✓ / latest ✗ |
+| `hosp.diagnoses_icd`                  | `Condition` (hospital)             |   ✓    | prior ✓ + latest ✗ |
+| `ed.diagnosis`                        | `Condition` (ED)                   |   ✓    | prior ✓ + latest ✗ |
+| `hosp.prescriptions`                  | `MedicationRequest`                |   ✓    | prior ✓ + latest ✗ |
+| `ed.medrecon`                         | `MedicationStatement` (ED)         |   ✓    | prior ✓ + latest ✗ |
+| `ed.pyxis`                            | `MedicationDispense` (ED)          |   ✓    | prior ✓ + latest ✗ |
+| `icu.inputevents`                     | `MedicationAdministration` (ICU)   |   ✓    | prior ✓ + latest ✗ |
+| `icu.ingredientevents`                | `MedicationAdministration` (ICU)   |   ✓    | prior ✓ + latest ✗ |
+| `hosp.procedures_icd`                 | `Procedure`                        |   ✓    | prior ✓ + latest ✗ |
 | `hosp.labevents`                      | `Observation` (laboratory)         |   ✓    |         ✓          |
 | `icu.chartevents`                     | `Observation` (vital-signs)        |   ✓    |         ✓          |
 | `icu.procedureevents`                 | `Observation` (ICU procedure)      |   ✓    |         ✓          |
@@ -218,13 +218,31 @@ load-specific options:
 | `hosp.drgcodes`                       | `Claim` + `ExplanationOfBenefit`   |   ✓    |         ✓          |
 | `hosp.provider`                       | `Practitioner`                     |   ✓    |         ✓          |
 | `icu.caregivers`                      | `Practitioner` (ICU)               |   ✓    |         ✓          |
-| `note.discharge` + `discharge_detail` | `DocumentReference` (discharge)    |   ✓    | prior ✓ / latest ✗ |
-| `note.radiology` + `radiology_detail` | `DocumentReference` (radiology)    |   ✓    | prior ✓ / latest ✗ |
+| `note.discharge` + `discharge_detail` | `DocumentReference` (discharge)    |   ✓    | prior ✓ + latest ✗ |
+| `note.radiology` + `radiology_detail` | `DocumentReference` (radiology)    |   ✓    | prior ✓ + latest ✗ |
 
 > **"latest" blinding** applies to the most recent hospital admission (`latest_hadm`) and
 > the most recent ED stay (`latest_ed_stay`). All prior encounters are always included.  
 > **Lab cap:** 500 most-recent lab events per patient.  
-> **Note cap:** 20 most-recent notes per type (discharge / radiology) per patient.
+> **Note cap:** 20 most-recent notes per type (discharge + radiology) per patient.
+>
+> **Per-patient caps** (apply to both `bundle` and `golddata` pipelines):
+>
+> | Resource                                            | Cap  |
+> | --------------------------------------------------- | ---- |
+> | `hosp.labevents` → `Observation`                    | 500  |
+> | `icu.chartevents` (vitals) → `Observation`          | 2000 |
+> | `icu.procedureevents` → `Observation`               | 500  |
+> | `icu.datetimeevents` → `Observation`                | 500  |
+> | `icu.outputevents` → `Observation`                  | 500  |
+> | `icu.inputevents` → `MedicationAdministration`      | 2000 |
+> | `icu.ingredientevents` → `MedicationAdministration` | 2000 |
+> | `note.discharge` → `DocumentReference`              | 20   |
+> | `note.radiology` → `DocumentReference`              | 20   |
+>
+> Each cap selects the most-recent rows per patient (ORDER BY time DESC LIMIT N).
+> Caps keep bundle size manageable on the full dataset where `icu.chartevents`
+> alone has 432 M rows.
 
 ---
 
