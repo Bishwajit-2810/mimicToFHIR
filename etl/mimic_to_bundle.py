@@ -261,6 +261,30 @@ _SERVICE_PLACE: dict[str, tuple[str, str]] = {
     "IMP":  ("21", "Inpatient Hospital"),
 }
 
+_SERVICE_DISPLAY: dict[str, str] = {
+    "CMED":  "Cardiac Medicine",
+    "CSURG": "Cardiac Surgery",
+    "DENT":  "Dentistry",
+    "ENT":   "Ear, Nose & Throat",
+    "EYE":   "Ophthalmology",
+    "GU":    "Genitourinary",
+    "GYN":   "Gynecology",
+    "MED":   "Medicine",
+    "NB":    "Newborn",
+    "NBB":   "Newborn",
+    "NMED":  "Neurology Medicine",
+    "NSURG": "Neurosurgery",
+    "OBS":   "Obstetrics",
+    "OMED":  "Oncology Medicine",
+    "ORTHO": "Orthopedics",
+    "PSURG": "Plastic Surgery",
+    "PSYCH": "Psychiatry",
+    "SURG":  "Surgery",
+    "TRAUM": "Trauma",
+    "TSURG": "Thoracic Surgery",
+    "VSURG": "Vascular Surgery",
+}
+
 
 # ── resource builders ─────────────────────────────────────────────────────────
 
@@ -451,7 +475,12 @@ def build_patient(row: dict, admission: dict | None) -> dict:
 
 
 def build_encounter_hosp(
-    row: dict, patient_uid: str, org_uid: str, provider_uid: str | None
+    row: dict,
+    patient_uid: str,
+    org_uid: str,
+    provider_uid: str | None,
+    service_code: str | None = None,
+    transfer_rows: list[dict] | None = None,
 ) -> dict:
     uid = _uuid("encounter-hosp", row["hadm_id"])
     adm_type_key = (row.get("admission_type") or "").upper()
@@ -499,6 +528,32 @@ def build_encounter_hosp(
         hosp["dischargeDisposition"] = {"text": row["discharge_location"]}
     if hosp:
         r["hospitalization"] = hosp
+
+    if service_code:
+        r["serviceType"] = {
+            "coding": [
+                _coding(
+                    "http://mimic.mit.edu/fhir/CodeSystem/services",
+                    service_code,
+                    _SERVICE_DISPLAY.get(service_code, service_code),
+                )
+            ],
+            "text": _SERVICE_DISPLAY.get(service_code, service_code),
+        }
+
+    if transfer_rows:
+        r["location"] = [
+            {
+                "location": {"display": t["careunit"]},
+                "status": "completed",
+                "period": {
+                    "start": _dt(t["intime"]),
+                    **({"end": _dt(t["outtime"])} if t.get("outtime") else {}),
+                },
+            }
+            for t in transfer_rows
+            if t.get("careunit")
+        ]
 
     if row.get("insurance"):
         r["extension"] = [
@@ -1718,6 +1773,32 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         provider_uids[pid] = uid
         add(build_practitioner(pid))
 
+    # Pre-load services (last curr_service per hadm_id)
+    cur.execute(
+        """
+        SELECT DISTINCT ON (hadm_id) hadm_id, curr_service
+        FROM hosp.services
+        WHERE subject_id = %s AND curr_service IS NOT NULL
+        ORDER BY hadm_id, transfertime DESC
+        """,
+        (subject_id,),
+    )
+    service_per_hadm: dict[int, str] = {r["hadm_id"]: r["curr_service"] for r in cur.fetchall()}
+
+    # Pre-load transfers (all careunit rows per hadm_id, ordered by intime)
+    cur.execute(
+        """
+        SELECT hadm_id, careunit, intime, outtime
+        FROM hosp.transfers
+        WHERE subject_id = %s AND careunit IS NOT NULL
+        ORDER BY hadm_id, intime
+        """,
+        (subject_id,),
+    )
+    transfers_per_hadm: dict[int, list] = {}
+    for t in cur.fetchall():
+        transfers_per_hadm.setdefault(t["hadm_id"], []).append(t)
+
     # Hospital encounters
     cur.execute(
         "SELECT * FROM hosp.admissions WHERE subject_id = %s ORDER BY admittime",
@@ -1727,7 +1808,14 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
     hosp_enc_uids: dict[int, str] = {}
     for adm in admissions:
         p_uid = provider_uids.get(adm.get("admit_provider_id") or "")
-        enc = build_encounter_hosp(adm, patient_uid, BIDMC_UUID, p_uid)
+        enc = build_encounter_hosp(
+            adm,
+            patient_uid,
+            BIDMC_UUID,
+            p_uid,
+            service_code=service_per_hadm.get(adm["hadm_id"]),
+            transfer_rows=transfers_per_hadm.get(adm["hadm_id"]),
+        )
         hosp_enc_uids[adm["hadm_id"]] = enc["id"]
         add(enc)
 

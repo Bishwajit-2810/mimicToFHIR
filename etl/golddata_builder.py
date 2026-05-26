@@ -242,6 +242,30 @@ _SERVICE_PLACE: dict[str, tuple[str, str]] = {
     "IMP":  ("21", "Inpatient Hospital"),
 }
 
+_SERVICE_DISPLAY: dict[str, str] = {
+    "CMED":  "Cardiac Medicine",
+    "CSURG": "Cardiac Surgery",
+    "DENT":  "Dentistry",
+    "ENT":   "Ear, Nose & Throat",
+    "EYE":   "Ophthalmology",
+    "GU":    "Genitourinary",
+    "GYN":   "Gynecology",
+    "MED":   "Medicine",
+    "NB":    "Newborn",
+    "NBB":   "Newborn",
+    "NMED":  "Neurology Medicine",
+    "NSURG": "Neurosurgery",
+    "OBS":   "Obstetrics",
+    "OMED":  "Oncology Medicine",
+    "ORTHO": "Orthopedics",
+    "PSURG": "Plastic Surgery",
+    "PSYCH": "Psychiatry",
+    "SURG":  "Surgery",
+    "TRAUM": "Trauma",
+    "TSURG": "Thoracic Surgery",
+    "VSURG": "Vascular Surgery",
+}
+
 # LOINC codes for common ICU chart items
 CHART_LOINC: dict[int, str] = {
     220045: "8867-4",   # Heart Rate
@@ -453,6 +477,8 @@ def build_encounter_hosp(
     patient_uid: str,
     org_uid: str,
     provider_uid: str | None,
+    service_code: str | None = None,
+    transfer_rows: list[dict] | None = None,
 ) -> dict:
     uid = _uuid("encounter-hosp", row["hadm_id"])
     adm_type_key = (row.get("admission_type") or "").upper()
@@ -501,6 +527,32 @@ def build_encounter_hosp(
         hosp["dischargeDisposition"] = {"text": row["discharge_location"]}
     if hosp:
         r["hospitalization"] = hosp
+
+    if service_code:
+        r["serviceType"] = {
+            "coding": [
+                _coding(
+                    "http://mimic.mit.edu/fhir/CodeSystem/services",
+                    service_code,
+                    _SERVICE_DISPLAY.get(service_code, service_code),
+                )
+            ],
+            "text": _SERVICE_DISPLAY.get(service_code, service_code),
+        }
+
+    if transfer_rows:
+        r["location"] = [
+            {
+                "location": {"display": t["careunit"]},
+                "status": "completed",
+                "period": {
+                    "start": _dt(t["intime"]),
+                    **({"end": _dt(t["outtime"])} if t.get("outtime") else {}),
+                },
+            }
+            for t in transfer_rows
+            if t.get("careunit")
+        ]
 
     if row.get("insurance"):
         r["extension"] = [

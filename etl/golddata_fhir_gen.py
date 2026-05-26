@@ -141,6 +141,31 @@ def convert_patient(
         provider_uids[pid] = uid
         add(bb.build_practitioner(pid))
 
+    # ── Pre-load services and transfers for hospital encounters ──────────────
+    cur.execute(
+        """
+        SELECT DISTINCT ON (hadm_id) hadm_id, curr_service
+        FROM hosp.services
+        WHERE subject_id = %s AND curr_service IS NOT NULL
+        ORDER BY hadm_id, transfertime DESC
+        """,
+        (subject_id,),
+    )
+    service_per_hadm: dict[int, str] = {r["hadm_id"]: r["curr_service"] for r in cur.fetchall()}
+
+    cur.execute(
+        """
+        SELECT hadm_id, careunit, intime, outtime
+        FROM hosp.transfers
+        WHERE subject_id = %s AND careunit IS NOT NULL
+        ORDER BY hadm_id, intime
+        """,
+        (subject_id,),
+    )
+    transfers_per_hadm: dict[int, list] = {}
+    for t in cur.fetchall():
+        transfers_per_hadm.setdefault(t["hadm_id"], []).append(t)
+
     # ── Hospital encounters — full metadata, no blinding ──────────────────────
     cur.execute(
         "SELECT * FROM hosp.admissions WHERE subject_id = %s ORDER BY admittime",
@@ -150,7 +175,14 @@ def convert_patient(
     hosp_enc_uids: dict[int, str] = {}
     for adm in admissions:
         p_uid = provider_uids.get(adm.get("admit_provider_id") or "")
-        enc = bb.build_encounter_hosp(adm, patient_uid, bb.BIDMC_UUID, p_uid)
+        enc = bb.build_encounter_hosp(
+            adm,
+            patient_uid,
+            bb.BIDMC_UUID,
+            p_uid,
+            service_code=service_per_hadm.get(adm["hadm_id"]),
+            transfer_rows=transfers_per_hadm.get(adm["hadm_id"]),
+        )
         hosp_enc_uids[adm["hadm_id"]] = enc["id"]
         add(enc)
 

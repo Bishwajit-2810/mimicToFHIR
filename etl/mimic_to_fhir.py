@@ -146,6 +146,31 @@ def _icd_system(version: int) -> str:
     )
 
 
+_SERVICE_DISPLAY: dict[str, str] = {
+    "CMED":  "Cardiac Medicine",
+    "CSURG": "Cardiac Surgery",
+    "DENT":  "Dentistry",
+    "ENT":   "Ear, Nose & Throat",
+    "EYE":   "Ophthalmology",
+    "GU":    "Genitourinary",
+    "GYN":   "Gynecology",
+    "MED":   "Medicine",
+    "NB":    "Newborn",
+    "NBB":   "Newborn",
+    "NMED":  "Neurology Medicine",
+    "NSURG": "Neurosurgery",
+    "OBS":   "Obstetrics",
+    "OMED":  "Oncology Medicine",
+    "ORTHO": "Orthopedics",
+    "PSURG": "Plastic Surgery",
+    "PSYCH": "Psychiatry",
+    "SURG":  "Surgery",
+    "TRAUM": "Trauma",
+    "TSURG": "Thoracic Surgery",
+    "VSURG": "Vascular Surgery",
+}
+
+
 # ── resource builders ─────────────────────────────────────────────────────────
 
 
@@ -170,7 +195,11 @@ def build_patient(row: dict) -> dict:
     return r
 
 
-def build_encounter_hosp(row: dict) -> dict:
+def build_encounter_hosp(
+    row: dict,
+    service_code: str | None = None,
+    transfer_rows: list[dict] | None = None,
+) -> dict:
     r: dict = {
         "resourceType": "Encounter",
         "id": _uuid("encounter-hosp", row["hadm_id"]),
@@ -217,6 +246,32 @@ def build_encounter_hosp(row: dict) -> dict:
         r.setdefault("hospitalization", {})["admitSource"] = {
             "text": row["admission_location"]
         }
+    if service_code:
+        r["serviceType"] = {
+            "coding": [
+                _coding(
+                    "http://mimic.mit.edu/fhir/CodeSystem/services",
+                    service_code,
+                    _SERVICE_DISPLAY.get(service_code, service_code),
+                )
+            ],
+            "text": _SERVICE_DISPLAY.get(service_code, service_code),
+        }
+
+    if transfer_rows:
+        r["location"] = [
+            {
+                "location": {"display": t["careunit"]},
+                "status": "completed",
+                "period": {
+                    "start": _dt(t["intime"]),
+                    **({"end": _dt(t["outtime"])} if t.get("outtime") else {}),
+                },
+            }
+            for t in transfer_rows
+            if t.get("careunit")
+        ]
+
     # Race / ethnicity as extension
     if row["race"]:
         r.setdefault("extension", []).append(
@@ -1185,12 +1240,46 @@ def convert(dsn: str = DSN, output_dir: Path = OUTPUT_DIR, *, batch_size: int = 
         build_patient,
     )
 
-    # Encounter (hospital)
-    run(
-        "Encounter (hospital)",
-        "SELECT * FROM hosp.admissions",
-        build_encounter_hosp,
+    # Pre-load services (last curr_service per hadm_id) and transfers for hospital encounters
+    print("  Pre-loading services and transfers ...", end=" ", flush=True)
+    cur.execute(
+        """
+        SELECT DISTINCT ON (hadm_id) hadm_id, curr_service
+        FROM hosp.services
+        WHERE curr_service IS NOT NULL
+        ORDER BY hadm_id, transfertime DESC
+        """
     )
+    service_per_hadm: dict[int, str] = {r["hadm_id"]: r["curr_service"] for r in cur.fetchall()}
+    cur.execute(
+        """
+        SELECT hadm_id, careunit, intime, outtime
+        FROM hosp.transfers
+        WHERE careunit IS NOT NULL
+        ORDER BY hadm_id, intime
+        """
+    )
+    transfers_per_hadm: dict[int, list] = {}
+    for t in cur.fetchall():
+        transfers_per_hadm.setdefault(t["hadm_id"], []).append(t)
+    print(f"{len(service_per_hadm)} service entries, {len(transfers_per_hadm)} transfer groups")
+
+    # Encounter (hospital)
+    print("  Encounter (hospital) ...", end=" ", flush=True)
+    cur.execute("SELECT * FROM hosp.admissions")
+    n = 0
+    while True:
+        rows = cur.fetchmany(batch_size)
+        if not rows:
+            break
+        for row in rows:
+            writer.write(build_encounter_hosp(
+                row,
+                service_code=service_per_hadm.get(row["hadm_id"]),
+                transfer_rows=transfers_per_hadm.get(row["hadm_id"]),
+            ))
+            n += 1
+    print(n)
 
     # Encounter (ICU)
     run(
