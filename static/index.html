@@ -13,6 +13,7 @@
     />
     <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   </head>
   <body>
     <!-- ═══════════════════════════ HEADER ══════════════════════════════════ -->
@@ -115,6 +116,10 @@
           <button class="tab-btn" data-tab="notes">
             <i class="fas fa-file-medical mr-2"></i
             ><span class="tab-label">Clinical Notes</span>
+          </button>
+          <button class="tab-btn" data-tab="analytics">
+            <i class="fas fa-chart-column mr-2"></i
+            ><span class="tab-label">Analytics</span>
           </button>
         </nav>
       </div>
@@ -548,9 +553,383 @@
       </div>
       <!-- /tab-notes -->
 
+      <!-- ─────────────── TAB 6: ANALYTICS ──────────────────────────────────── -->
+      <div id="tab-analytics" class="tab-pane hidden space-y-8">
+
+        <!-- ── Section A: Encounter Analytics ─────────────────────────────── -->
+        <div>
+          <h2 class="analytics-section-title">
+            <i class="fas fa-calendar-days"></i> Encounter Analytics
+          </h2>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-5">
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#0c4a6e 0%,#075985 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-ruler-horizontal"></i></div>
+                <span>Length of Stay</span>
+                <span class="ml-auto text-blue-200/60 text-xs font-normal">hours / days</span>
+              </div>
+              <div class="p-4" style="height:240px;position:relative;">
+                <canvas id="chartA_los"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#1e1b4b 0%,#312e81 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-chart-bar"></i></div>
+                <span>Encounter Class Breakdown</span>
+              </div>
+              <div class="p-4" style="height:240px;position:relative;">
+                <canvas id="chartA_types"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#052e16 0%,#14532d 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-layer-group"></i></div>
+                <span>Records per Encounter</span>
+                <span class="ml-auto text-emerald-200/60 text-xs font-normal">stacked</span>
+              </div>
+              <div class="p-4" style="height:240px;position:relative;">
+                <canvas id="chartA_records"></canvas>
+              </div>
+            </section>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#1c3545 0%,#164e63 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-door-open"></i></div>
+                <span>Admit Source Distribution</span>
+              </div>
+              <div class="p-4" style="height:220px;position:relative;">
+                <canvas id="chartA_admit"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#1e3a5f 0%,#1d4ed8 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-clock-rotate-left"></i></div>
+                <span>Encounter Status</span>
+              </div>
+              <div class="p-4" style="height:220px;position:relative;">
+                <canvas id="chartA_status"></canvas>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <!-- ── Section B: Diagnosis Analysis ──────────────────────────────── -->
+        <div>
+          <h2 class="analytics-section-title">
+            <i class="fas fa-stethoscope"></i> Diagnosis Analysis
+          </h2>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-5">
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#4c0519 0%,#881337 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-chart-bar"></i></div>
+                <span>Diagnoses per Encounter</span>
+              </div>
+              <div class="p-4" style="height:240px;position:relative;">
+                <canvas id="chartB_perEnc"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#1c1917 0%,#44403c 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-code-branch"></i></div>
+                <span>ICD Code System</span>
+              </div>
+              <div class="p-4" style="height:240px;position:relative;">
+                <canvas id="chartB_icd"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#14532d 0%,#166534 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-circle-half-stroke"></i></div>
+                <span>Diagnosis Status</span>
+              </div>
+              <div class="p-4" style="height:240px;position:relative;">
+                <canvas id="chartB_status"></canvas>
+              </div>
+            </section>
+          </div>
+          <section class="card">
+            <div class="card-header" style="background:linear-gradient(135deg,#3b0764 0%,#6d28d9 100%);">
+              <div class="header-icon-wrap"><i class="fas fa-list-ol"></i></div>
+              <span>All Diagnoses — Frequency Chart</span>
+              <span class="ml-auto text-violet-200/60 text-xs font-normal">sorted by count</span>
+            </div>
+            <div class="p-4" style="height:350px;position:relative;">
+              <canvas id="chartB_top"></canvas>
+            </div>
+          </section>
+        </div>
+
+        <!-- ── Section C: Lab Results Analysis ────────────────────────────── -->
+        <div>
+          <h2 class="analytics-section-title">
+            <i class="fas fa-flask-vial"></i> Lab Results Analysis
+          </h2>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-5">
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#1e1b4b 0%,#4338ca 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-flag"></i></div>
+                <span>Lab Flag Distribution</span>
+              </div>
+              <div class="p-4" style="height:240px;position:relative;">
+                <canvas id="chartC_flags"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#0c4a6e 0%,#0e7490 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-flask"></i></div>
+                <span>Labs per Encounter</span>
+              </div>
+              <div class="p-4" style="height:240px;position:relative;">
+                <canvas id="chartC_perEnc"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#450a0a 0%,#7f1d1d 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-triangle-exclamation"></i></div>
+                <span>Abnormal Lab Count by Type</span>
+              </div>
+              <div class="p-4" style="height:240px;position:relative;">
+                <canvas id="chartC_abnormal"></canvas>
+              </div>
+            </section>
+          </div>
+          <section class="card">
+            <div class="card-header" style="background:linear-gradient(135deg,#1e1b4b 0%,#312e81 100%);">
+              <div class="header-icon-wrap"><i class="fas fa-vials"></i></div>
+              <span>All Lab Results — Value &amp; Flag Overview</span>
+              <span class="ml-auto text-indigo-200/60 text-xs font-normal">latest values</span>
+            </div>
+            <div class="p-4" style="height:400px;position:relative;">
+              <canvas id="chartC_allLabs"></canvas>
+            </div>
+          </section>
+        </div>
+
+        <!-- ── Section D: Vitals Overview ─────────────────────────────────── -->
+        <div>
+          <h2 class="analytics-section-title">
+            <i class="fas fa-heart-pulse"></i> Vitals &amp; Clinical Scores
+          </h2>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#7f1d1d 0%,#991b1b 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-heart-pulse"></i></div>
+                <span>Vital Signs — Current Values</span>
+                <span class="ml-auto text-red-200/60 text-xs font-normal">colour = status</span>
+              </div>
+              <div class="p-4" style="height:280px;position:relative;">
+                <canvas id="chartD_vitals"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#78350f 0%,#92400e 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-gauge-high"></i></div>
+                <span>Vitals — Normal vs Abnormal Count</span>
+              </div>
+              <div class="p-4" style="height:280px;position:relative;">
+                <canvas id="chartD_vitalStatus"></canvas>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <!-- ── Section E: Medications & Procedures ────────────────────────── -->
+        <div>
+          <h2 class="analytics-section-title">
+            <i class="fas fa-pills"></i> Medications &amp; Procedures
+          </h2>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-5">
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#4c1d95 0%,#6d28d9 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-pills"></i></div>
+                <span>Medication Status</span>
+              </div>
+              <div class="p-4" style="height:240px;position:relative;">
+                <canvas id="chartE_medStatus"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#14532d 0%,#15803d 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-syringe"></i></div>
+                <span>Procedures per Encounter</span>
+              </div>
+              <div class="p-4" style="height:240px;position:relative;">
+                <canvas id="chartE_procsPerEnc"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#1c1917 0%,#374151 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-route"></i></div>
+                <span>Medication Routes</span>
+              </div>
+              <div class="p-4" style="height:240px;position:relative;">
+                <canvas id="chartE_medRoutes"></canvas>
+              </div>
+            </section>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#4a044e 0%,#7e22ce 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-capsules"></i></div>
+                <span>Top Medications</span>
+                <span class="ml-auto text-purple-200/60 text-xs font-normal">by frequency</span>
+              </div>
+              <div class="p-4" style="height:300px;position:relative;">
+                <canvas id="chartE_topMeds"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#052e16 0%,#166534 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-list-check"></i></div>
+                <span>Top Procedures</span>
+                <span class="ml-auto text-emerald-200/60 text-xs font-normal">by frequency</span>
+              </div>
+              <div class="p-4" style="height:300px;position:relative;">
+                <canvas id="chartE_topProcs"></canvas>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <!-- ── Section F: Temporal Analysis ──────────────────────────────── -->
+        <div>
+          <h2 class="analytics-section-title">
+            <i class="fas fa-clock"></i> Temporal Analysis
+          </h2>
+          <section class="card mb-5">
+            <div class="card-header" style="background:linear-gradient(135deg,#0c4a6e 0%,#155e75 100%);">
+              <div class="header-icon-wrap"><i class="fas fa-timeline"></i></div>
+              <span>Encounter Timeline — Duration Overview</span>
+              <span class="ml-auto text-cyan-200/60 text-xs font-normal">days since first encounter</span>
+            </div>
+            <div class="p-4" style="height:260px;position:relative;">
+              <canvas id="chartF_timeline"></canvas>
+            </div>
+          </section>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#1e3a5f 0%,#1e40af 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-clock"></i></div>
+                <span>Encounters by Hour of Day</span>
+                <span class="ml-auto text-blue-200/60 text-xs font-normal">admission time</span>
+              </div>
+              <div class="p-4" style="height:230px;position:relative;">
+                <canvas id="chartF_hour"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#3b0764 0%,#6d28d9 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-calendar-week"></i></div>
+                <span>Encounters by Day of Week</span>
+                <span class="ml-auto text-violet-200/60 text-xs font-normal">admission day</span>
+              </div>
+              <div class="p-4" style="height:230px;position:relative;">
+                <canvas id="chartF_dow"></canvas>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <!-- ── Section G: Vitals Deep Dive ──────────────────────────────── -->
+        <div>
+          <h2 class="analytics-section-title">
+            <i class="fas fa-heart-pulse"></i> Vitals Deep Dive
+          </h2>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#7f1d1d 0%,#991b1b 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-chart-bar"></i></div>
+                <span>Vital Values Across Encounters</span>
+                <span class="ml-auto text-red-200/60 text-xs font-normal">latest per type</span>
+              </div>
+              <div class="p-4" style="height:280px;position:relative;">
+                <canvas id="chartG_crossEnc"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#78350f 0%,#92400e 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-chart-bar"></i></div>
+                <span>Normal vs Abnormal Vitals per Encounter</span>
+              </div>
+              <div class="p-4" style="height:280px;position:relative;">
+                <canvas id="chartG_vitalStatus"></canvas>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <!-- ── Section H: Lab Reference Analysis ─────────────────────────── -->
+        <div>
+          <h2 class="analytics-section-title">
+            <i class="fas fa-vials"></i> Lab Reference Range Analysis
+          </h2>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#0c4a6e 0%,#0e7490 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-ruler-combined"></i></div>
+                <span>Ref-Range Compliance per Encounter</span>
+                <span class="ml-auto text-cyan-200/60 text-xs font-normal">below / in / above</span>
+              </div>
+              <div class="p-4" style="height:260px;position:relative;">
+                <canvas id="chartH_refRange"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#450a0a 0%,#7f1d1d 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-percent"></i></div>
+                <span>Abnormal Lab Rate per Encounter</span>
+                <span class="ml-auto text-red-200/60 text-xs font-normal">% of all labs flagged</span>
+              </div>
+              <div class="p-4" style="height:260px;position:relative;">
+                <canvas id="chartH_abnRate"></canvas>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <!-- ── Section I: Admission, Discharge & Notes ────────────────────── -->
+        <div>
+          <h2 class="analytics-section-title">
+            <i class="fas fa-file-medical"></i> Admission, Discharge &amp; Notes
+          </h2>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#064e3b 0%,#065f46 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-door-closed"></i></div>
+                <span>Discharge Disposition</span>
+              </div>
+              <div class="p-4" style="height:260px;position:relative;">
+                <canvas id="chartI_dischDisp"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#064e3b 0%,#0f766e 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-file-lines"></i></div>
+                <span>Clinical Note Types</span>
+              </div>
+              <div class="p-4" style="height:260px;position:relative;">
+                <canvas id="chartI_noteTypes"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#1e3a5f 0%,#1e40af 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-microscope"></i></div>
+                <span>Notes &amp; Reports per Encounter</span>
+              </div>
+              <div class="p-4" style="height:260px;position:relative;">
+                <canvas id="chartI_notesPerEnc"></canvas>
+              </div>
+            </section>
+          </div>
+        </div>
+
+      </div>
+      <!-- /tab-analytics -->
+
     </main>
     <!-- /dashboard -->
 
-    <script src="/static/app.js?v=2"></script>
+    <script src="/static/app.js?v=3"></script>
   </body>
 </html>
