@@ -1279,6 +1279,57 @@ function _renderEncCharts(idx) {
       });
     }
   }
+
+  // Inject download buttons into this encounter's chart cards
+  setTimeout(_injectDownloadBtns, 0);
+}
+
+// ── Chart download helpers ────────────────────────────────────────────────────
+function _downloadCanvas(canvas, filename) {
+  // Render chart onto a dark background so exported PNG isn't transparent
+  const off = document.createElement('canvas');
+  off.width  = canvas.width;
+  off.height = canvas.height;
+  const ctx  = off.getContext('2d');
+  ctx.fillStyle = '#161b22';
+  ctx.fillRect(0, 0, off.width, off.height);
+  ctx.drawImage(canvas, 0, 0);
+  const a = document.createElement('a');
+  a.href     = off.toDataURL('image/png');
+  a.download = (filename || 'chart').replace(/\W+/g, '_') + '.png';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+function _injectDownloadBtns() {
+  // Analytics tab: button goes into .card-header
+  document.querySelectorAll('#tab-analytics section.card').forEach(card => {
+    if (card.querySelector('.chart-dl-btn')) return;
+    const canvas = card.querySelector('canvas');
+    const header = card.querySelector('.card-header');
+    if (!canvas || !header) return;
+    const btn = document.createElement('button');
+    btn.className = 'chart-dl-btn';
+    btn.title     = 'Download chart as PNG';
+    btn.innerHTML = '<i class="fas fa-download"></i>';
+    btn.onclick   = e => { e.stopPropagation(); _downloadCanvas(canvas, canvas.id); };
+    header.appendChild(btn);
+  });
+
+  // Per-encounter charts: button goes into .enc-chart-label
+  document.querySelectorAll('.enc-chart-card').forEach(card => {
+    if (card.querySelector('.chart-dl-btn')) return;
+    const canvas = card.querySelector('canvas');
+    const label  = card.querySelector('.enc-chart-label');
+    if (!canvas || !label) return;
+    const btn = document.createElement('button');
+    btn.className      = 'chart-dl-btn enc-dl-btn';
+    btn.title          = 'Download chart as PNG';
+    btn.innerHTML      = '<i class="fas fa-download"></i>';
+    btn.onclick        = e => { e.stopPropagation(); _downloadCanvas(canvas, canvas.id); };
+    label.appendChild(btn);
+  });
 }
 
 // ── Charts — helpers ─────────────────────────────────────────────────────────
@@ -1850,6 +1901,9 @@ function renderAnalytics(d) {
       },
     });
   }
+
+  // Inject download buttons into all analytics chart cards
+  setTimeout(_injectDownloadBtns, 0);
 }
 // ── Utility ───────────────────────────────────────────────────────────────────
 function esc(str) {
