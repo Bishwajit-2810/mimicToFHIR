@@ -1350,3 +1350,88 @@ body {
 .enc-chart-label .enc-dl-btn {
   margin-left: auto;
 }
+
+/* ── Population Analytics Toggle Button ──────────────────────────────────── */
+.pop-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.42rem 0.8rem;
+  background: rgba(88, 166, 255, 0.07);
+  border: 1px solid rgba(88, 166, 255, 0.22);
+  border-radius: 0.65rem;
+  color: #79c0ff;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.pop-toggle-btn:hover {
+  background: rgba(88, 166, 255, 0.14);
+  border-color: rgba(88, 166, 255, 0.45);
+  color: #cdd9e5;
+}
+.pop-toggle-btn.active {
+  background: rgba(88, 166, 255, 0.18);
+  border-color: rgba(88, 166, 255, 0.55);
+  color: #e6edf3;
+}
+
+/* ── Population Analytics Panel ──────────────────────────────────────────── */
+
+/* Progress loading */
+.pop-progress-wrap {
+  width: 100%;
+  max-width: 420px;
+  margin: 1.25rem auto 0.5rem;
+  height: 5px;
+  background: #21262d;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.pop-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #1f6feb, #58a6ff, #79c0ff);
+  border-radius: 3px;
+  transition: width 0.25s ease;
+}
+
+/* Stats bar */
+.pop-stats-bar {
+  background: rgba(13, 17, 23, 0.97);
+  border-bottom: 1px solid #21262d;
+  padding: 0.6rem 0;
+}
+.pop-stats-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+}
+.pop-stat-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.4rem 1.1rem;
+  border-right: 1px solid #21262d;
+  flex: 1 1 80px;
+  min-width: 70px;
+}
+.pop-stat-chip:last-child { border-right: none; }
+.pop-stat-num {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #cdd9e5;
+  line-height: 1.1;
+}
+.pop-stat-label {
+  font-size: 0.6rem;
+  color: #6e7681;
+  margin-top: 0.2rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+/* Population section title (reuses .analytics-section-title) */

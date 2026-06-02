@@ -104,7 +104,12 @@ async function loadPatient(id) {
 }
 
 // ── Visibility helpers ────────────────────────────────────────────────────────
+function _hidePopPanel() {
+  $("populationPanel").classList.add("hidden");
+  $("popToggleBtn").classList.remove("active");
+}
 function showEmpty() {
+  _hidePopPanel();
   emptyState.classList.remove("hidden");
   loadingState.classList.add("hidden");
   dashboard.classList.add("hidden");
@@ -113,12 +118,14 @@ function showEmpty() {
   $("patientBadge").classList.add("hidden");
 }
 function showLoading() {
+  _hidePopPanel();
   loadingState.classList.remove("hidden");
   emptyState.classList.add("hidden");
   dashboard.classList.add("hidden");
   tabNav.classList.add("hidden");
 }
 function showDashboard() {
+  _hidePopPanel();
   loadingState.classList.add("hidden");
   dashboard.classList.remove("hidden");
   tabNav.classList.remove("hidden");
@@ -1303,8 +1310,8 @@ function _downloadCanvas(canvas, filename) {
 }
 
 function _injectDownloadBtns() {
-  // Analytics tab: button goes into .card-header
-  document.querySelectorAll('#tab-analytics section.card').forEach(card => {
+  // Analytics tab + Population panel: button goes into .card-header
+  document.querySelectorAll('#tab-analytics section.card, #populationPanel section.card').forEach(card => {
     if (card.querySelector('.chart-dl-btn')) return;
     const canvas = card.querySelector('canvas');
     const header = card.querySelector('.card-header');
@@ -1922,4 +1929,786 @@ function kv(label, val) {
       <span style="color:#6e7681;white-space:nowrap;">${esc(label)}:</span>
       <span style="color:#cdd9e5;font-weight:600;">${esc(String(val))}</span>
     </div>`;
+}
+
+// ── Population Analytics ──────────────────────────────────────────────────────
+let _popData    = null;
+let _popLoading = false;
+
+function togglePopulation() {
+  const panel  = $("populationPanel");
+  const btn    = $("popToggleBtn");
+  const isOpen = !panel.classList.contains("hidden");
+  if (isOpen) {
+    panel.classList.add("hidden");
+    btn.classList.remove("active");
+    // restore visible state depending on whether a patient is loaded
+    if (currentData) showDashboard();
+    else showEmpty();
+    return;
+  }
+  // hide all patient UI, show population panel
+  emptyState.classList.add("hidden");
+  loadingState.classList.add("hidden");
+  dashboard.classList.add("hidden");
+  tabNav.classList.add("hidden");
+  patientInfoBar.classList.add("hidden");
+  $("patientBadge").classList.add("hidden");
+  panel.classList.remove("hidden");
+  btn.classList.add("active");
+  if (!_popData && !_popLoading) _loadPopulationAnalytics();
+}
+
+async function _loadPopulationAnalytics() {
+  _popLoading = true;
+  $("popProgress").classList.remove("hidden");
+  $("popStats").classList.add("hidden");
+  $("popCharts").classList.add("hidden");
+  $("popProgressBar").style.width = "0%";
+  $("popProgressText").textContent = "Fetching patient list…";
+  $("popProgressSub").textContent  = "";
+
+  let patients = [];
+  try {
+    const r = await fetch("/api/patients");
+    patients = (await r.json()).patients || [];
+  } catch (e) {
+    $("popProgressText").textContent = "Failed to load patient list.";
+    _popLoading = false;
+    return;
+  }
+
+  const total   = patients.length;
+  const allData = [];
+  const BATCH   = 10;
+
+  for (let i = 0; i < total; i += BATCH) {
+    const batch = patients.slice(i, i + BATCH);
+    const results = await Promise.all(
+      batch.map(id => fetch(`/api/patients/${id}`).then(r => r.ok ? r.json() : null).catch(() => null))
+    );
+    allData.push(...results.filter(Boolean));
+    const pct = Math.round(allData.length / total * 100);
+    $("popProgressBar").style.width  = pct + "%";
+    $("popProgressText").textContent = `Loading… ${pct}%`;
+    $("popProgressSub").textContent  = `${allData.length} / ${total} patients`;
+  }
+
+  _popData = allData;
+  _popLoading = false;
+  $("popProgress").classList.add("hidden");
+  $("popStats").classList.remove("hidden");
+  $("popCharts").classList.remove("hidden");
+  _renderPopulationCharts(allData);
+}
+
+function _renderPopulationCharts(all) {
+  const allConds = all.flatMap(d => d.conditions  || []);
+  const allMeds  = all.flatMap(d => d.medications || []);
+  const allLabs  = all.flatMap(d => d.labs        || []);
+  const allVits  = all.flatMap(d => d.vitals      || []);
+  const allEncs  = all.flatMap(d => d.encounters  || []);
+  const allProcs = all.flatMap(d => d.procedures  || []);
+  const allNotes = all.flatMap(d => d.notes       || []);
+  const allRpts  = all.flatMap(d =>
+    (d.encounters || []).flatMap(e => e.encounterData?.diagnosticReports || [])
+  );
+
+  // Stats bar
+  $("pStatPts").textContent   = all.length.toLocaleString();
+  $("pStatEncs").textContent  = allEncs.length.toLocaleString();
+  $("pStatDx").textContent    = allConds.length.toLocaleString();
+  $("pStatMeds").textContent  = allMeds.length.toLocaleString();
+  $("pStatLabs").textContent  = allLabs.length.toLocaleString();
+  $("pStatProcs").textContent = allProcs.length.toLocaleString();
+  $("pStatNotes").textContent = allNotes.length.toLocaleString();
+  $("pStatVits").textContent  = allVits.length.toLocaleString();
+
+  // ── B: Demographics ──────────────────────────────────────────────────────────
+
+  // Gender donut
+  {
+    const m = _tally(all.map(d => d.demographics?.gender || "Unknown"));
+    const keys  = Object.keys(m);
+    const gPal  = { male: "#58a6ff", female: "#f472b6", other: "#ffa657", unknown: "#484f58" };
+    _mkDonut("chartP_gender", keys, keys.map(k => m[k]),
+      keys.map(k => gPal[k.toLowerCase()] || "#79c0ff"));
+  }
+
+  // Age histogram by decade
+  {
+    const buckets = {};
+    all.forEach(d => {
+      const a = d.demographics?.age;
+      if (a == null) return;
+      const k = Math.floor(a / 10) * 10 + "s";
+      buckets[k] = (buckets[k] || 0) + 1;
+    });
+    const keys = Object.keys(buckets).sort((a, b) => parseInt(a) - parseInt(b));
+    _mkVBar("chartP_ageHist", keys, keys.map(k => buckets[k]), "#79c0ff");
+  }
+
+  // Race horizontal bar
+  {
+    const entries = _top(_tally(all.map(d => d.demographics?.race || "Unknown")), 10);
+    _mkHBar("chartP_race", entries.map(e => e[0]), entries.map(e => e[1]), "#22d3ee");
+  }
+
+  // Ethnicity bar
+  {
+    const m    = _tally(all.map(d => d.demographics?.ethnicity || "Unknown"));
+    const keys = Object.keys(m);
+    const pal  = ["#f472b6", "#818cf8", "#34d399", "#fbbf24", "#38bdf8", "#a78bfa"];
+    _mkBar("chartP_ethnicity", keys, [{
+      data: keys.map(k => m[k]),
+      backgroundColor: keys.map((_, i) => pal[i % pal.length] + "44"),
+      borderColor:     keys.map((_, i) => pal[i % pal.length]),
+      borderWidth: 1.5, borderRadius: 3,
+    }], { plugins: { legend: { display: false } } });
+  }
+
+  // ── C: Encounter Analytics ───────────────────────────────────────────────────
+
+  // Encounter type breakdown
+  {
+    const m   = {};
+    allEncs.forEach(e => { const k = _encTypeLabel(e); m[k] = (m[k] || 0) + 1; });
+    const keys = Object.keys(m);
+    const pal  = ["#58a6ff", "#3fb950", "#ffa657", "#f85149", "#d2a8ff", "#79c0ff"];
+    _mkBar("chartP_encType", keys, keys.map((k, i) => ({
+      label: k, data: [m[k]],
+      backgroundColor: pal[i % pal.length] + "44",
+      borderColor:     pal[i % pal.length],
+      borderWidth: 1.5, borderRadius: 3,
+    })), { plugins: { legend: { display: false } } });
+  }
+
+  // LOS histogram (binned)
+  {
+    const bins = { "0–1d": 0, "1–3d": 0, "3–7d": 0, "7–14d": 0, "14–30d": 0, ">30d": 0 };
+    allEncs.forEach(e => {
+      const los = _encLOS(e);
+      if (los == null) return;
+      if      (los <= 1)  bins["0–1d"]++;
+      else if (los <= 3)  bins["1–3d"]++;
+      else if (los <= 7)  bins["3–7d"]++;
+      else if (los <= 14) bins["7–14d"]++;
+      else if (los <= 30) bins["14–30d"]++;
+      else                bins[">30d"]++;
+    });
+    const keys = Object.keys(bins);
+    _mkVBar("chartP_losHist", keys, keys.map(k => bins[k]), "#38bdf8");
+  }
+
+  // Encounters per patient histogram
+  {
+    const bins = {};
+    all.forEach(d => {
+      const n = (d.encounters || []).length;
+      const k = `${n}`;
+      bins[k] = (bins[k] || 0) + 1;
+    });
+    const keys = Object.keys(bins).sort((a, b) => +a - +b);
+    _mkVBar("chartP_encPerPt", keys, keys.map(k => bins[k]), "#3fb950", {
+      plugins: { tooltip: { callbacks: { label: c => ` ${c.raw} patient${c.raw !== 1 ? "s" : ""}` } } },
+    });
+  }
+
+  // Admit source
+  {
+    const m = {};
+    allEncs.forEach(e => { if (e.admitSource) m[e.admitSource] = (m[e.admitSource] || 0) + 1; });
+    const entries = _top(m, 10);
+    _mkHBar("chartP_admitSrc", entries.map(e => e[0]), entries.map(e => e[1]), "#22d3ee");
+  }
+
+  // Discharge disposition
+  {
+    const m = {};
+    allEncs.forEach(e => { if (e.dischDisp) m[e.dischDisp] = (m[e.dischDisp] || 0) + 1; });
+    const entries = _top(m, 10);
+    _mkHBar("chartP_dischDisp", entries.map(e => e[0].slice(0, 35)), entries.map(e => e[1]), "#34d399");
+  }
+
+  // ── D: Diagnosis Landscape ───────────────────────────────────────────────────
+
+  // Top 30 diagnoses
+  {
+    const entries = _top(_tally(allConds, "name"), 30);
+    _mkHBar("chartP_topDx",
+      entries.map(e => e[0].slice(0, 50)),
+      entries.map(e => e[1]),
+      "#d2a8ff", {
+        plugins: { tooltip: { callbacks: { label: c => ` ${c.raw} occurrence${c.raw !== 1 ? "s" : ""}` } } },
+      });
+  }
+
+  // Conditions per patient histogram
+  {
+    const bins = { "0": 0, "1–2": 0, "3–5": 0, "6–10": 0, "11–20": 0, ">20": 0 };
+    all.forEach(d => {
+      const n = (d.conditions || []).length;
+      if      (n === 0) bins["0"]++;
+      else if (n <= 2)  bins["1–2"]++;
+      else if (n <= 5)  bins["3–5"]++;
+      else if (n <= 10) bins["6–10"]++;
+      else if (n <= 20) bins["11–20"]++;
+      else              bins[">20"]++;
+    });
+    const keys = Object.keys(bins);
+    _mkVBar("chartP_condPerPt", keys, keys.map(k => bins[k]), "#fb7185");
+  }
+
+  // ICD system donut
+  {
+    const m    = _tally(allConds, "codeSystem");
+    const keys = Object.keys(m);
+    const pal  = { "ICD-10": "#58a6ff", "ICD-9": "#ffa657", "Unknown": "#484f58" };
+    _mkDonut("chartP_icdSys", keys, keys.map(k => m[k]),
+      keys.map(k => pal[k] || "#79c0ff"));
+  }
+
+  // Diagnosis status bar
+  {
+    const m    = _tally(allConds, "status");
+    const keys = Object.keys(m);
+    const pal  = { active: "#f85149", resolved: "#3fb950", inactive: "#6e7681", remission: "#ffa657", unknown: "#484f58" };
+    _mkBar("chartP_dxStatus", keys.map(k => k.charAt(0).toUpperCase() + k.slice(1)), [{
+      data: keys.map(k => m[k]),
+      backgroundColor: keys.map(k => (pal[k] || "#58a6ff") + "44"),
+      borderColor:     keys.map(k =>  pal[k] || "#58a6ff"),
+      borderWidth: 1.5, borderRadius: 3,
+    }], {});
+  }
+
+  // ── E: Lab Results ───────────────────────────────────────────────────────────
+
+  // Lab flag distribution bar
+  {
+    const m = {};
+    allLabs.forEach(l => { const f = (!l.flag || l.flag === "N") ? "Normal" : l.flag; m[f] = (m[f] || 0) + 1; });
+    const order   = ["Normal", "H", "HH", "L", "LL", "A"];
+    const present = order.filter(f => m[f]);
+    const fc      = { Normal: "#3fb950", H: "#ffa657", HH: "#f85149", L: "#79c0ff", LL: "#58a6ff", A: "#ff7b72" };
+    _mkBar("chartP_labFlags", present, [{
+      data: present.map(f => m[f]),
+      backgroundColor: present.map(f => (fc[f] || "#58a6ff") + "44"),
+      borderColor:     present.map(f =>  fc[f] || "#58a6ff"),
+      borderWidth: 1.5, borderRadius: 3,
+    }], { plugins: { legend: { display: false } } });
+  }
+
+  // Labs per patient histogram
+  {
+    const bins = { "0": 0, "1–10": 0, "11–30": 0, "31–60": 0, "61–120": 0, ">120": 0 };
+    all.forEach(d => {
+      const n = (d.labs || []).length;
+      if      (n === 0) bins["0"]++;
+      else if (n <= 10) bins["1–10"]++;
+      else if (n <= 30) bins["11–30"]++;
+      else if (n <= 60) bins["31–60"]++;
+      else if (n <= 120) bins["61–120"]++;
+      else               bins[">120"]++;
+    });
+    const keys = Object.keys(bins);
+    _mkVBar("chartP_labPerPt", keys, keys.map(k => bins[k]), "#818cf8");
+  }
+
+  // Abnormal lab rate per patient histogram
+  {
+    const bins = { "0%": 0, "1–10%": 0, "11–25%": 0, "26–50%": 0, "51–75%": 0, ">75%": 0 };
+    all.forEach(d => {
+      const labs = d.labs || [];
+      if (!labs.length) { bins["0%"]++; return; }
+      const r = labs.filter(l => l.flag && l.flag !== "N" && l.flag !== "").length / labs.length * 100;
+      if      (r === 0) bins["0%"]++;
+      else if (r <= 10) bins["1–10%"]++;
+      else if (r <= 25) bins["11–25%"]++;
+      else if (r <= 50) bins["26–50%"]++;
+      else if (r <= 75) bins["51–75%"]++;
+      else              bins[">75%"]++;
+    });
+    const keys = Object.keys(bins);
+    _mkVBar("chartP_abnLabRate", keys, keys.map(k => bins[k]), "#f85149");
+  }
+
+  // Top 25 most common lab tests
+  {
+    const entries = _top(_tally(allLabs, "name"), 25);
+    _mkHBar("chartP_topLabs",
+      entries.map(e => e[0].slice(0, 38)),
+      entries.map(e => e[1]),
+      "#818cf8");
+  }
+
+  // ── F: Medications & Procedures ──────────────────────────────────────────────
+
+  // Top 25 medications
+  {
+    const entries = _top(_tally(allMeds, "name"), 25);
+    _mkHBar("chartP_topMeds",
+      entries.map(e => e[0].slice(0, 40)),
+      entries.map(e => e[1]),
+      "#a78bfa", {
+        plugins: { tooltip: { callbacks: { label: c => ` ${c.raw} occurrence${c.raw !== 1 ? "s" : ""}` } } },
+      });
+  }
+
+  // Top procedures
+  {
+    const entries = _top(_tally(allProcs, "name"), 20);
+    if (entries.length) {
+      _mkHBar("chartP_topProcs",
+        entries.map(e => e[0].slice(0, 40)),
+        entries.map(e => e[1]),
+        "#4ade80", {
+          plugins: { tooltip: { callbacks: { label: c => ` ${c.raw} occurrence${c.raw !== 1 ? "s" : ""}` } } },
+        });
+    }
+  }
+
+  // Medication routes
+  {
+    const entries = _top(_tally(allMeds.map(m => m.route || "Unknown")), 10);
+    _mkHBar("chartP_medRoute", entries.map(e => e[0]), entries.map(e => e[1]), "#c084fc");
+  }
+
+  // Medication status
+  {
+    const m    = _tally(allMeds, "status");
+    const keys = Object.keys(m);
+    const pal  = { active: "#3fb950", completed: "#58a6ff", stopped: "#f85149", "on-hold": "#ffa657", unknown: "#484f58" };
+    _mkBar("chartP_medStatus", keys, [{
+      data: keys.map(k => m[k]),
+      backgroundColor: keys.map(k => (pal[k] || "#79c0ff") + "44"),
+      borderColor:     keys.map(k =>  pal[k] || "#79c0ff"),
+      borderWidth: 1.5, borderRadius: 3,
+    }], {});
+  }
+
+  // Medications per patient histogram
+  {
+    const bins = { "0": 0, "1–3": 0, "4–7": 0, "8–15": 0, "16–30": 0, ">30": 0 };
+    all.forEach(d => {
+      const n = (d.medications || []).length;
+      if      (n === 0) bins["0"]++;
+      else if (n <= 3)  bins["1–3"]++;
+      else if (n <= 7)  bins["4–7"]++;
+      else if (n <= 15) bins["8–15"]++;
+      else if (n <= 30) bins["16–30"]++;
+      else              bins[">30"]++;
+    });
+    const keys = Object.keys(bins);
+    _mkVBar("chartP_medPerPt", keys, keys.map(k => bins[k]), "#c084fc");
+  }
+
+  // ── G: Vitals & Notes ────────────────────────────────────────────────────────
+
+  // Most common vitals across all patients
+  {
+    const entries = _top(_tally(allVits, "name"), 12);
+    if (entries.length) {
+      _mkHBar("chartP_topVitals",
+        entries.map(e => e[0]),
+        entries.map(e => e[1]),
+        "#f87171");
+    }
+  }
+
+  // Vital normal vs abnormal
+  {
+    const norm = allVits.filter(v => v.status !== "abnormal").length;
+    const abn  = allVits.filter(v => v.status === "abnormal").length;
+    _mkBar("chartP_vitalStatus", ["Normal", "Abnormal"], [{
+      data: [norm, abn],
+      backgroundColor: ["#3fb95044", "#f8514944"],
+      borderColor:     ["#3fb950",   "#f85149"],
+      borderWidth: 1.5, borderRadius: 4,
+    }], {});
+  }
+
+  // Note type distribution
+  {
+    const entries = _top(_tally(allNotes, "typeDisplay"), 12);
+    if (entries.length) {
+      _mkHBar("chartP_noteTypes",
+        entries.map(e => e[0]),
+        entries.map(e => e[1]),
+        "#34d399");
+    }
+  }
+
+  // Diagnostic reports per patient histogram
+  {
+    const bins = { "0": 0, "1": 0, "2–3": 0, "4–6": 0, ">6": 0 };
+    all.forEach(d => {
+      const n = (d.encounters || []).reduce(
+        (s, e) => s + (e.encounterData?.diagnosticReports || []).length, 0
+      );
+      if      (n === 0) bins["0"]++;
+      else if (n === 1) bins["1"]++;
+      else if (n <= 3)  bins["2–3"]++;
+      else if (n <= 6)  bins["4–6"]++;
+      else              bins[">6"]++;
+    });
+    const keys = Object.keys(bins);
+    _mkVBar("chartP_rptPerPt", keys, keys.map(k => bins[k]), "#38bdf8");
+  }
+
+  // ── B extra: Birth Sex, Deceased, Anchor Year ──────────────────────────────
+
+  // Birth sex donut
+  {
+    const m    = _tally(all.map(d => d.demographics?.birthSex || "Unknown"));
+    const keys = Object.keys(m);
+    const pal  = { M: "#58a6ff", F: "#f472b6", male: "#58a6ff", female: "#f472b6", Unknown: "#484f58" };
+    _mkDonut("chartP_birthSex", keys, keys.map(k => m[k]),
+      keys.map(k => pal[k] || pal[k.toLowerCase()] || "#79c0ff"));
+  }
+
+  // Deceased vs alive donut
+  {
+    const deceased = all.filter(d => {
+      const v = d.demographics?.deceased;
+      return v && v !== false && v !== "No" && v !== "no";
+    }).length;
+    _mkDonut("chartP_deceased", ["Alive", "Deceased"], [all.length - deceased, deceased],
+      ["#3fb950", "#f85149"]);
+  }
+
+  // Anchor year group bar
+  {
+    const m    = _tally(all.map(d => d.demographics?.anchorYear || "Unknown"));
+    const keys = Object.keys(m).sort();
+    _mkVBar("chartP_anchorYear", keys, keys.map(k => m[k]), "#fbbf24");
+  }
+
+  // ── C extra: Avg LOS by Type, Encounter Status, ICU per Patient ────────────
+
+  // Avg LOS by encounter type
+  {
+    const byType = {};
+    allEncs.forEach(e => {
+      const t   = _encTypeLabel(e);
+      const los = _encLOS(e);
+      if (los == null) return;
+      if (!byType[t]) byType[t] = { total: 0, count: 0 };
+      byType[t].total += los; byType[t].count++;
+    });
+    const keys = Object.keys(byType);
+    const pal  = ["#58a6ff", "#3fb950", "#ffa657", "#f85149", "#d2a8ff"];
+    _mkBar("chartP_avgLosByType", keys, [{
+      data: keys.map(k => +(byType[k].total / byType[k].count).toFixed(1)),
+      backgroundColor: keys.map((_, i) => pal[i % pal.length] + "44"),
+      borderColor:     keys.map((_, i) => pal[i % pal.length]),
+      borderWidth: 1.5, borderRadius: 3,
+    }], {
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: c => ` avg ${c.raw} days` } } },
+    });
+  }
+
+  // Encounter status donut
+  {
+    const m    = _tally(allEncs, "status");
+    const keys = Object.keys(m);
+    const pal  = { finished: "#3fb950", "in-progress": "#ffa657", unknown: "#484f58" };
+    _mkDonut("chartP_encStatus", keys, keys.map(k => m[k]),
+      keys.map(k => pal[k] || "#58a6ff"));
+  }
+
+  // ICU stays per patient histogram
+  {
+    const bins = { "0": 0, "1": 0, "2": 0, "3+": 0 };
+    all.forEach(d => {
+      const n = (d.encounters || []).reduce((s, e) => s + (e.children?.length || 0), 0);
+      if      (n === 0) bins["0"]++;
+      else if (n === 1) bins["1"]++;
+      else if (n === 2) bins["2"]++;
+      else              bins["3+"]++;
+    });
+    const keys = Object.keys(bins);
+    _mkVBar("chartP_icuPerPt", keys, keys.map(k => bins[k]), "#22d3ee");
+  }
+
+  // ── E extra: Top Abnormal Labs, Ref Compliance, Critical Labs ──────────────
+
+  // Top labs most-often flagged abnormal
+  {
+    const abnM = {};
+    allLabs.filter(l => l.flag && l.flag !== "N" && l.flag !== "").forEach(l => {
+      abnM[l.name] = (abnM[l.name] || 0) + 1;
+    });
+    const entries = _top(abnM, 20);
+    if (entries.length)
+      _mkHBar("chartP_topAbnLabs", entries.map(e => e[0].slice(0, 35)), entries.map(e => e[1]), "#f85149");
+  }
+
+  // Reference range compliance — all labs combined
+  {
+    const below   = allLabs.filter(l => l.refLow  != null && typeof l.value === "number" && l.value < l.refLow).length;
+    const inRange = allLabs.filter(l => l.refLow  != null && l.refHigh != null && typeof l.value === "number" && l.value >= l.refLow && l.value <= l.refHigh).length;
+    const above   = allLabs.filter(l => l.refHigh != null && typeof l.value === "number" && l.value > l.refHigh).length;
+    const noRef   = allLabs.filter(l => l.refLow == null  && l.refHigh == null).length;
+    _mkBar("chartP_refCompliance",
+      ["Below Range", "In Range", "Above Range", "No Ref Data"],
+      [{ data: [below, inRange, above, noRef],
+         backgroundColor: ["#79c0ff44", "#3fb95044", "#f8514944", "#48495844"],
+         borderColor:     ["#79c0ff",   "#3fb950",   "#f85149",   "#484958"],
+         borderWidth: 1.5, borderRadius: 3 }],
+      { plugins: { legend: { display: false },
+          tooltip: { callbacks: { label: c => ` ${c.raw.toLocaleString()} labs` } } } });
+  }
+
+  // Critical (HH/LL) labs — top 15
+  {
+    const critM = {};
+    allLabs.filter(l => l.flag === "HH" || l.flag === "LL").forEach(l => {
+      critM[l.name] = (critM[l.name] || 0) + 1;
+    });
+    const entries = _top(critM, 15);
+    if (entries.length)
+      _mkHBar("chartP_critLabs", entries.map(e => e[0].slice(0, 35)), entries.map(e => e[1]), "#f85149");
+  }
+
+  // ── F extra: Procedures per patient, Med dispense status ───────────────────
+
+  // Procedures per patient histogram
+  {
+    const bins = { "0": 0, "1–5": 0, "6–15": 0, "16–30": 0, ">30": 0 };
+    all.forEach(d => {
+      const n = (d.procedures || []).length;
+      if      (n === 0) bins["0"]++;
+      else if (n <= 5)  bins["1–5"]++;
+      else if (n <= 15) bins["6–15"]++;
+      else if (n <= 30) bins["16–30"]++;
+      else              bins[">30"]++;
+    });
+    const keys = Object.keys(bins);
+    _mkVBar("chartP_procsPerPt", keys, keys.map(k => bins[k]), "#4ade80");
+  }
+
+  // Medication dispense status (reuse allMeds data with fuller breakdown)
+  {
+    const m    = _tally(allMeds, "status");
+    const keys = Object.keys(m);
+    const pal  = { completed: "#58a6ff", active: "#3fb950", stopped: "#f85149", "on-hold": "#ffa657", unknown: "#484f58", cancelled: "#f87171" };
+    _mkBar("chartP_medDispStatus", keys, [{
+      data: keys.map(k => m[k]),
+      backgroundColor: keys.map(k => (pal[k] || "#79c0ff") + "44"),
+      borderColor:     keys.map(k =>  pal[k] || "#79c0ff"),
+      borderWidth: 1.5, borderRadius: 3,
+    }], { plugins: { legend: { display: false } } });
+  }
+
+  // ── G extra: Vitals per patient, Notes per patient ──────────────────────────
+
+  // Vitals per patient histogram
+  {
+    const bins = { "0": 0, "1–5": 0, "6–15": 0, "16–30": 0, ">30": 0 };
+    all.forEach(d => {
+      const n = (d.vitals || []).length;
+      if      (n === 0) bins["0"]++;
+      else if (n <= 5)  bins["1–5"]++;
+      else if (n <= 15) bins["6–15"]++;
+      else if (n <= 30) bins["16–30"]++;
+      else              bins[">30"]++;
+    });
+    const keys = Object.keys(bins);
+    _mkVBar("chartP_vitPerPt", keys, keys.map(k => bins[k]), "#f87171");
+  }
+
+  // Notes per patient histogram
+  {
+    const bins = { "0": 0, "1–2": 0, "3–5": 0, "6–10": 0, ">10": 0 };
+    all.forEach(d => {
+      const n = (d.notes || []).length;
+      if      (n === 0) bins["0"]++;
+      else if (n <= 2)  bins["1–2"]++;
+      else if (n <= 5)  bins["3–5"]++;
+      else if (n <= 10) bins["6–10"]++;
+      else              bins[">10"]++;
+    });
+    const keys = Object.keys(bins);
+    _mkVBar("chartP_notePerPt", keys, keys.map(k => bins[k]), "#34d399");
+  }
+
+  // ── H: Cross-Dimensional Analysis ──────────────────────────────────────────
+
+  // Avg encounters by gender
+  {
+    const byG = {};
+    all.forEach(d => {
+      const g = d.demographics?.gender || "Unknown";
+      if (!byG[g]) byG[g] = { total: 0, count: 0 };
+      byG[g].total += (d.encounters || []).length; byG[g].count++;
+    });
+    const keys = Object.keys(byG);
+    const pal  = { Male: "#58a6ff", Female: "#f472b6", male: "#58a6ff", female: "#f472b6" };
+    _mkBar("chartP_genderVsEnc", keys, [{
+      data: keys.map(k => +(byG[k].total / byG[k].count).toFixed(2)),
+      backgroundColor: keys.map(k => (pal[k] || "#79c0ff") + "44"),
+      borderColor:     keys.map(k =>  pal[k] || "#79c0ff"),
+      borderWidth: 1.5, borderRadius: 3,
+    }], {
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: c => ` avg ${c.raw} encounters per patient` } } },
+    });
+  }
+
+  // Avg conditions by age group
+  {
+    const byAge = {};
+    all.forEach(d => {
+      const a = d.demographics?.age; if (a == null) return;
+      const k = Math.floor(a / 10) * 10 + "s";
+      if (!byAge[k]) byAge[k] = { total: 0, count: 0 };
+      byAge[k].total += (d.conditions || []).length; byAge[k].count++;
+    });
+    const keys = Object.keys(byAge).sort((a, b) => parseInt(a) - parseInt(b));
+    _mkVBar("chartP_ageVsCond", keys,
+      keys.map(k => +(byAge[k].total / byAge[k].count).toFixed(1)),
+      "#fb7185", {
+        plugins: { tooltip: { callbacks: { label: c => ` avg ${c.raw} conditions` } } },
+      });
+  }
+
+  // Avg LOS by age group
+  {
+    const byAge = {};
+    all.forEach(d => {
+      const a = d.demographics?.age; if (a == null) return;
+      const k = Math.floor(a / 10) * 10 + "s";
+      (d.encounters || []).forEach(e => {
+        const los = _encLOS(e); if (los == null) return;
+        if (!byAge[k]) byAge[k] = { total: 0, count: 0 };
+        byAge[k].total += los; byAge[k].count++;
+      });
+    });
+    const keys = Object.keys(byAge).sort((a, b) => parseInt(a) - parseInt(b));
+    _mkVBar("chartP_ageVsLos", keys,
+      keys.map(k => +(byAge[k].total / byAge[k].count).toFixed(1)),
+      "#38bdf8", {
+        plugins: { tooltip: { callbacks: { label: c => ` avg ${c.raw} days LOS` } } },
+      });
+  }
+
+  // Avg abnormal lab % by gender
+  {
+    const byG = {};
+    all.forEach(d => {
+      const g    = d.demographics?.gender || "Unknown";
+      const labs = d.labs || [];
+      if (!labs.length) return;
+      const rate = labs.filter(l => l.flag && l.flag !== "N" && l.flag !== "").length / labs.length * 100;
+      if (!byG[g]) byG[g] = { total: 0, count: 0 };
+      byG[g].total += rate; byG[g].count++;
+    });
+    const keys = Object.keys(byG);
+    const pal  = { Male: "#58a6ff", Female: "#f472b6", male: "#58a6ff", female: "#f472b6" };
+    _mkBar("chartP_genderVsAbnLab", keys, [{
+      data: keys.map(k => +(byG[k].total / byG[k].count).toFixed(1)),
+      backgroundColor: keys.map(k => (pal[k] || "#79c0ff") + "44"),
+      borderColor:     keys.map(k =>  pal[k] || "#79c0ff"),
+      borderWidth: 1.5, borderRadius: 3,
+    }], {
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: c => ` avg ${c.raw}% abnormal labs` } } },
+    });
+  }
+
+  // Avg abnormal lab % by race
+  {
+    const byR = {};
+    all.forEach(d => {
+      const race = d.demographics?.race || "Unknown";
+      const labs = d.labs || [];
+      if (!labs.length) return;
+      const rate = labs.filter(l => l.flag && l.flag !== "N" && l.flag !== "").length / labs.length * 100;
+      if (!byR[race]) byR[race] = { total: 0, count: 0 };
+      byR[race].total += rate; byR[race].count++;
+    });
+    const entries = Object.entries(byR)
+      .map(([k, v]) => [k, +(v.total / v.count).toFixed(1)])
+      .sort((a, b) => b[1] - a[1]).slice(0, 10);
+    _mkHBar("chartP_raceVsAbnLab",
+      entries.map(e => e[0]), entries.map(e => e[1]), "#ffa657", {
+        plugins: { tooltip: { callbacks: { label: c => ` avg ${c.raw}% labs flagged` } } },
+      });
+  }
+
+  // Avg procedures per encounter type
+  {
+    const byType = {};
+    all.forEach(d => {
+      (d.encounters || []).forEach(e => {
+        const t   = _encTypeLabel(e);
+        const n   = (e.encounterData?.procedures || []).length;
+        if (!byType[t]) byType[t] = { total: 0, count: 0 };
+        byType[t].total += n; byType[t].count++;
+      });
+    });
+    const keys = Object.keys(byType);
+    const pal  = ["#4ade80", "#3fb950", "#22c55e", "#16a34a", "#15803d"];
+    _mkBar("chartP_encTypeVsProcs", keys, [{
+      data: keys.map(k => +(byType[k].total / byType[k].count).toFixed(1)),
+      backgroundColor: keys.map((_, i) => pal[i % pal.length] + "44"),
+      borderColor:     keys.map((_, i) => pal[i % pal.length]),
+      borderWidth: 1.5, borderRadius: 3,
+    }], {
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: c => ` avg ${c.raw} procedures` } } },
+    });
+  }
+
+  // Avg medications per encounter type
+  {
+    const byType = {};
+    all.forEach(d => {
+      (d.encounters || []).forEach(e => {
+        const t = _encTypeLabel(e);
+        const n = (e.encounterData?.medications || []).length;
+        if (!byType[t]) byType[t] = { total: 0, count: 0 };
+        byType[t].total += n; byType[t].count++;
+      });
+    });
+    const keys = Object.keys(byType);
+    const pal  = ["#c084fc", "#a78bfa", "#8b5cf6", "#7c3aed", "#6d28d9"];
+    _mkBar("chartP_encTypeVsMeds", keys, [{
+      data: keys.map(k => +(byType[k].total / byType[k].count).toFixed(1)),
+      backgroundColor: keys.map((_, i) => pal[i % pal.length] + "44"),
+      borderColor:     keys.map((_, i) => pal[i % pal.length]),
+      borderWidth: 1.5, borderRadius: 3,
+    }], {
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: c => ` avg ${c.raw} medications` } } },
+    });
+  }
+
+  // Avg labs per encounter type
+  {
+    const byType = {};
+    all.forEach(d => {
+      (d.encounters || []).forEach(e => {
+        const t = _encTypeLabel(e);
+        const n = (e.encounterData?.labs || []).length;
+        if (!byType[t]) byType[t] = { total: 0, count: 0 };
+        byType[t].total += n; byType[t].count++;
+      });
+    });
+    const keys = Object.keys(byType);
+    const pal  = ["#818cf8", "#6366f1", "#4f46e5", "#4338ca", "#3730a3"];
+    _mkBar("chartP_encTypeVsLabs", keys, [{
+      data: keys.map(k => +(byType[k].total / byType[k].count).toFixed(1)),
+      backgroundColor: keys.map((_, i) => pal[i % pal.length] + "44"),
+      borderColor:     keys.map((_, i) => pal[i % pal.length]),
+      borderWidth: 1.5, borderRadius: 3,
+    }], {
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: c => ` avg ${c.raw} labs` } } },
+    });
+  }
+
+  // Inject download buttons into population chart cards
+  setTimeout(_injectDownloadBtns, 0);
 }
