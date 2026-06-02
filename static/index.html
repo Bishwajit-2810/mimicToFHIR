@@ -1252,9 +1252,9 @@
           </div>
           <section class="card mt-5">
             <div class="card-header" style="background:linear-gradient(135deg,#4c0519 0%,#9f1239 100%);">
-              <div class="header-icon-wrap"><i class="fas fa-skull-crossbones"></i></div>
-              <span>Critical Labs (HH / LL) — Top 15 Most Critical Tests</span>
-              <span class="ml-auto text-rose-200/60 text-xs font-normal">HH = critically high · LL = critically low</span>
+              <div class="header-icon-wrap"><i class="fas fa-percent"></i></div>
+              <span>Highest Abnormal Rate by Lab Test</span>
+              <span class="ml-auto text-rose-200/60 text-xs font-normal">% of results flagged · min 5 results</span>
             </div>
             <div class="p-4" style="height:320px;position:relative;">
               <canvas id="chartP_critLabs"></canvas>
@@ -1333,8 +1333,8 @@
             <section class="card">
               <div class="card-header" style="background:linear-gradient(135deg,#1e1b4b 0%,#312e81 100%);">
                 <div class="header-icon-wrap"><i class="fas fa-pills"></i></div>
-                <span>Medication Status Distribution</span>
-                <span class="ml-auto text-indigo-200/60 text-xs font-normal">across all dispensed</span>
+                <span>Medications per Encounter</span>
+                <span class="ml-auto text-indigo-200/60 text-xs font-normal">histogram · encounters with ≥1 med</span>
               </div>
               <div class="p-4" style="height:240px;position:relative;">
                 <canvas id="chartP_medDispStatus"></canvas>
@@ -1508,6 +1508,6 @@
     </div>
     <!-- /populationPanel -->
 
-    <script src="/static/app.js?v=4"></script>
+    <script src="/static/app.js?v=8"></script>
   </body>
 </html>

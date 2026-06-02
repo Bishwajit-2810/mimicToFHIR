@@ -1343,6 +1343,87 @@ function _injectDownloadBtns() {
 const _GC = '#21262d';
 const _TC = '#6e7681';
 
+// ── Axis label registry ────────────────────────────────────────────────────────
+// [xAxisLabel, yAxisLabel]
+// For HORIZONTAL bar charts Chart.js puts categories on the y-axis (left) and
+// values on the x-axis (bottom).  Adding a rotated y-title to a horizontal chart
+// shifts the plot area and clips category labels, so horizontal charts only
+// receive an x-title (value axis).  Pass null for y to skip it explicitly.
+const _CHART_LABELS = {
+  // ── Per-patient Analytics ────────────────────────────────────────────────────
+  chartA_los:         ['LOS (days)',               null],               // hbar
+  chartA_types:       ['Encounter Type',           'Count'],
+  chartA_records:     ['Encounter #',             'Records'],
+  chartA_admit:       ['Count',                    null],               // hbar
+  chartA_status:      ['Status',                  'Encounters'],
+  chartB_perEnc:      ['Encounter #',             'Diagnoses'],
+  chartB_icd:         ['ICD Code System',          'Conditions'],
+  chartB_status:      ['Diagnosis Status',         'Conditions'],
+  chartB_top:         ['Occurrences',              null],               // hbar
+  chartC_flags:       ['Flag Type',               'Lab Results'],
+  chartC_perEnc:      ['Encounter #',             'Lab Results'],
+  chartC_abnormal:    ['Count',                    null],               // hbar
+  chartC_allLabs:     ['Measured Value',            null],              // hbar
+  chartD_vitals:      ['Measured Value',            null],              // hbar
+  chartD_vitalStatus: ['Status',                  'Vital Readings'],
+  chartE_medStatus:   ['Medication Status',        'Medications'],
+  chartE_procsPerEnc: ['Encounter #',             'Procedures'],
+  chartE_medRoutes:   ['Count',                    null],               // hbar
+  chartE_topMeds:     ['Occurrences',              null],               // hbar
+  chartE_topProcs:    ['Occurrences',              null],               // hbar
+  chartF_hour:        ['Hour of Day',              'Encounters'],
+  chartF_dow:         ['Day of Week',             'Encounters'],
+  chartG_crossEnc:    ['Vital Sign',              'Measured Value'],
+  chartG_vitalStatus: ['Encounter',               'Vital Readings'],
+  chartH_refRange:    ['Encounter',               'Lab Results'],
+  chartH_abnRate:     ['Encounter',               'Abnormal Rate (%)'],
+  chartI_dischDisp:   ['Count',                    null],               // hbar
+  chartI_noteTypes:   ['Count',                    null],               // hbar
+  chartI_notesPerEnc: ['Encounter',               'Count'],
+  // ── Population Charts ────────────────────────────────────────────────────────
+  chartP_ageHist:        ['Age Group (decade)',          'Patients'],
+  chartP_race:           ['Patients',                     null],        // hbar
+  chartP_anchorYear:     ['Anchor Year Group',            'Patients'],
+  chartP_encType:        ['Encounter Type',               'Encounters'],
+  chartP_losHist:        ['LOS (days)',                  'Encounters'],
+  chartP_encPerPt:       ['Encounters per Patient',       'Patients'],
+  chartP_admitSrc:       ['Encounters',                   null],        // hbar
+  chartP_dischDisp:      ['Encounters',                   null],        // hbar
+  chartP_avgLosByType:   ['Encounter Type',               'Avg LOS (days)'],
+  chartP_icuPerPt:       ['ICU Stays per Patient',        'Patients'],
+  chartP_topDx:          ['Occurrences',                  null],        // hbar
+  chartP_condPerPt:      ['Conditions per Patient',       'Patients'],
+  chartP_dxStatus:       ['Diagnosis Status',             'Conditions'],
+  chartP_labFlags:       ['Flag Type',                   'Lab Results'],
+  chartP_labPerPt:       ['Labs per Patient',             'Patients'],
+  chartP_abnLabRate:     ['Abnormal Rate Bucket',         'Patients'],
+  chartP_topLabs:        ['Occurrences',                  null],        // hbar
+  chartP_topAbnLabs:     ['Abnormal Occurrences',         null],        // hbar
+  chartP_refCompliance:  ['Compliance Category',          'Lab Results'],
+  chartP_critLabs:       ['Abnormal Rate (%)',             null],        // hbar — custom chart, label set inline
+  chartP_topMeds:        ['Occurrences',                  null],        // hbar
+  chartP_topProcs:       ['Occurrences',                  null],        // hbar
+  chartP_medRoute:       ['Dispenses',                    null],        // hbar
+  chartP_medStatus:      ['Medication Status',            'Medications'],
+  chartP_medPerPt:       ['Medications per Patient',      'Patients'],
+  chartP_procsPerPt:     ['Procedures per Patient',       'Patients'],
+  chartP_medDispStatus:  ['Medications per Encounter',     'Encounters'],
+  chartP_topVitals:      ['Occurrences',                  null],        // hbar
+  chartP_vitalStatus:    ['Status',                      'Vital Readings'],
+  chartP_noteTypes:      ['Notes',                        null],        // hbar
+  chartP_rptPerPt:       ['Reports per Patient',          'Patients'],
+  chartP_vitPerPt:       ['Vitals per Patient',           'Patients'],
+  chartP_notePerPt:      ['Notes per Patient',            'Patients'],
+  chartP_genderVsEnc:    ['Gender',                      'Avg Encounters / Patient'],
+  chartP_ageVsCond:      ['Age Group',                   'Avg Conditions / Patient'],
+  chartP_ageVsLos:       ['Age Group',                   'Avg LOS (days)'],
+  chartP_genderVsAbnLab: ['Gender',                      'Avg Abnormal Lab %'],
+  chartP_raceVsAbnLab:   ['Avg Abnormal %',               null],        // hbar
+  chartP_encTypeVsProcs: ['Encounter Type',               'Avg Procedures / Enc'],
+  chartP_encTypeVsMeds:  ['Encounter Type',               'Avg Medications / Enc'],
+  chartP_encTypeVsLabs:  ['Encounter Type',               'Avg Lab Tests / Enc'],
+};
+
 function _encLOS(enc) {
   if (enc.los != null) return enc.los;
   if (!enc.start || !enc.end) return null;
@@ -1367,17 +1448,48 @@ function _mkBar(id, labels, datasets, opts = {}) {
   _destroyChart(id);
   const cv = document.getElementById(id);
   if (!cv) return;
+
+  // Look up axis labels from registry; opts can override.
+  // For horizontal charts the rotated y-axis title clashes with category
+  // labels — so we never apply a y-axis title to horizontal charts.
+  const [regX, regY] = _CHART_LABELS[id] || [];
+  const isHBar   = !!opts.horizontal;
+  const xLabel   = opts.xLabel ?? regX ?? null;
+  const yLabel   = (!isHBar) ? (opts.yLabel ?? regY ?? null) : null;
+  const _at      = text => text
+    ? { display: true, text, color: '#6e7681', font: { size: 9 }, padding: { top: 3, bottom: 3 } }
+    : { display: false };
+
   _charts[id] = new Chart(cv, {
     type: 'bar',
     data: { labels, datasets },
     options: {
-      responsive: true, maintainAspectRatio: false,
+      responsive: true,
+      maintainAspectRatio: false,
+      // Extra padding so axis titles / tick labels never clip at canvas edge
+      layout: { padding: { left: isHBar ? 2 : 4, right: 8, top: 4, bottom: 2 } },
       plugins: { legend: { display: false }, ...opts.plugins },
       scales: {
-        x: { stacked: !!opts.stacked, ticks: { color: _TC, font: { size: 10 }, maxRotation: opts.rotateX || 0 }, grid: { color: _GC } },
-        y: { stacked: !!opts.stacked, beginAtZero: true, ticks: { color: _TC, font: { size: 10 } }, grid: { color: _GC }, ...opts.yAxis },
+        x: {
+          stacked: !!opts.stacked,
+          ticks: {
+            color: _TC, font: { size: 10 },
+            maxRotation: opts.rotateX || 0,
+            autoSkip: true, maxTicksLimit: 20,
+          },
+          grid:  { color: _GC },
+          title: _at(xLabel),
+        },
+        y: {
+          stacked:     !!opts.stacked,
+          beginAtZero: true,
+          ticks: { color: _TC, font: { size: 10 }, autoSkip: true, maxTicksLimit: 15 },
+          grid:  { color: _GC },
+          title: _at(yLabel),
+          ...opts.yAxis,
+        },
       },
-      indexAxis: opts.horizontal ? 'y' : 'x',
+      indexAxis: isHBar ? 'y' : 'x',
       ...opts.extra,
     },
   });
@@ -1579,18 +1691,33 @@ function renderAnalytics(d) {
     _mkVBar('chartC_perEnc', rows.map(r => r.label), rows.map(r => r.n), '#818cf8');
   }
 
-  // C3 — Abnormal labs horizontal bar
+  // C3 — Abnormal lab count grouped by lab name (top 15 most-flagged tests)
   {
     const abnormal = labs.filter(l => l.flag && l.flag !== 'N');
     const flagColors = { H: '#ffa657', HH: '#f85149', L: '#79c0ff', LL: '#58a6ff', A: '#ff7b72' };
-    const entries = _top(_tally(abnormal, 'flag'), 10);
     if (abnormal.length) {
-      _mkBar('chartC_abnormal', abnormal.map(l => l.name.slice(0, 30)), [{
-        data: abnormal.map(() => 1),
-        backgroundColor: abnormal.map(l => (flagColors[l.flag] || '#f85149') + '55'),
-        borderColor: abnormal.map(l => flagColors[l.flag] || '#f85149'),
-        borderWidth: 1.5, borderRadius: 3,
-      }], { horizontal: true, plugins: { legend: { display: false } } });
+      const byName = {};
+      abnormal.forEach(l => { byName[l.name] = (byName[l.name] || 0) + 1; });
+      const entries = _top(byName, 15);
+      // pick the most common flag for each lab to use as colour
+      const labFlag = {};
+      abnormal.forEach(l => {
+        if (!labFlag[l.name]) labFlag[l.name] = {};
+        labFlag[l.name][l.flag] = (labFlag[l.name][l.flag] || 0) + 1;
+      });
+      const dominantFlag = name => Object.entries(labFlag[name] || {}).sort((a,b)=>b[1]-a[1])[0]?.[0] || 'A';
+      _mkHBar('chartC_abnormal',
+        entries.map(e => e[0].slice(0, 30)),
+        entries.map(e => e[1]),
+        '#ff7b72', {
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: c => {
+              const f = dominantFlag(entries[c.dataIndex][0]);
+              return ` ${c.raw} abnormal result${c.raw !== 1 ? 's' : ''} [${f}]`;
+            }}},
+          },
+        });
     }
   }
 
@@ -1757,7 +1884,7 @@ function renderAnalytics(d) {
     const hours = new Array(24).fill(0);
     encs.forEach(e => {
       const ms = _toMs(e.start);
-      if (!isNaN(ms)) hours[new Date(ms).getUTCHours()]++;
+      if (!isNaN(ms)) hours[new Date(ms).getHours()]++;
     });
     const hLabels = Array.from({length: 24}, (_, i) => `${String(i).padStart(2,'0')}h`);
     _mkVBar('chartF_hour', hLabels, hours, '#38bdf8', { rotateX: 45 });
@@ -1769,7 +1896,7 @@ function renderAnalytics(d) {
     const dow = new Array(7).fill(0);
     encs.forEach(e => {
       const ms = _toMs(e.start);
-      if (!isNaN(ms)) dow[(new Date(ms).getUTCDay() + 6) % 7]++;
+      if (!isNaN(ms)) dow[(new Date(ms).getDay() + 6) % 7]++;
     });
     _mkVBar('chartF_dow', days, dow, '#818cf8');
   }
@@ -2054,17 +2181,13 @@ function _renderPopulationCharts(all) {
     _mkHBar("chartP_race", entries.map(e => e[0]), entries.map(e => e[1]), "#22d3ee");
   }
 
-  // Ethnicity bar
+  // Ethnicity donut (better than a bar when one category dominates)
   {
     const m    = _tally(all.map(d => d.demographics?.ethnicity || "Unknown"));
     const keys = Object.keys(m);
-    const pal  = ["#f472b6", "#818cf8", "#34d399", "#fbbf24", "#38bdf8", "#a78bfa"];
-    _mkBar("chartP_ethnicity", keys, [{
-      data: keys.map(k => m[k]),
-      backgroundColor: keys.map((_, i) => pal[i % pal.length] + "44"),
-      borderColor:     keys.map((_, i) => pal[i % pal.length]),
-      borderWidth: 1.5, borderRadius: 3,
-    }], { plugins: { legend: { display: false } } });
+    const pal  = ["#38bdf8", "#f472b6", "#34d399", "#fbbf24", "#a78bfa", "#818cf8"];
+    _mkDonut("chartP_ethnicity", keys, keys.map(k => m[k]),
+      keys.map((_, i) => pal[i % pal.length]));
   }
 
   // ── C: Encounter Analytics ───────────────────────────────────────────────────
@@ -2460,15 +2583,55 @@ function _renderPopulationCharts(all) {
           tooltip: { callbacks: { label: c => ` ${c.raw.toLocaleString()} labs` } } } });
   }
 
-  // Critical (HH/LL) labs — top 15
+  // Highest abnormal rate per lab test (% of results flagged, min 5 results)
   {
-    const critM = {};
-    allLabs.filter(l => l.flag === "HH" || l.flag === "LL").forEach(l => {
-      critM[l.name] = (critM[l.name] || 0) + 1;
+    const byLab = {};
+    allLabs.forEach(l => {
+      if (!byLab[l.name]) byLab[l.name] = { total: 0, abn: 0 };
+      byLab[l.name].total++;
+      if (l.flag && l.flag !== "N" && l.flag !== "") byLab[l.name].abn++;
     });
-    const entries = _top(critM, 15);
-    if (entries.length)
-      _mkHBar("chartP_critLabs", entries.map(e => e[0].slice(0, 35)), entries.map(e => e[1]), "#f85149");
+    const entries = Object.entries(byLab)
+      .filter(([, v]) => v.total >= 5 && v.abn > 0)
+      .map(([k, v]) => [k, +(v.abn / v.total * 100).toFixed(1)])
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 15);
+    if (entries.length) {
+      _destroyChart("chartP_critLabs");
+      const cv = document.getElementById("chartP_critLabs");
+      if (cv) {
+        _charts["chartP_critLabs"] = new Chart(cv, {
+          type: "bar",
+          data: {
+            labels: entries.map(e => e[0].slice(0, 35)),
+            datasets: [{
+              data: entries.map(e => e[1]),
+              backgroundColor: entries.map(e => (e[1] >= 75 ? "#f85149" : e[1] >= 40 ? "#ffa657" : "#fbbf24") + "44"),
+              borderColor:     entries.map(e =>  e[1] >= 75 ? "#f85149" : e[1] >= 40 ? "#ffa657" : "#fbbf24"),
+              borderWidth: 1.5, borderRadius: 3,
+            }],
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            indexAxis: "y",
+            layout: { padding: { left: 2, right: 8, top: 4, bottom: 2 } },
+            plugins: {
+              legend: { display: false },
+              tooltip: { callbacks: { label: c => ` ${c.raw}% of results flagged abnormal` } },
+            },
+            scales: {
+              x: {
+                beginAtZero: true, max: 100,
+                ticks: { color: _TC, font: { size: 10 }, callback: v => v + "%" },
+                grid:  { color: _GC },
+                title: { display: true, text: "Abnormal Rate (%)", color: "#6e7681", font: { size: 9 }, padding: { top: 3, bottom: 3 } },
+              },
+              y: { ticks: { color: _TC, font: { size: 10 } }, grid: { color: _GC } },
+            },
+          },
+        });
+      }
+    }
   }
 
   // ── F extra: Procedures per patient, Med dispense status ───────────────────
@@ -2488,17 +2651,23 @@ function _renderPopulationCharts(all) {
     _mkVBar("chartP_procsPerPt", keys, keys.map(k => bins[k]), "#4ade80");
   }
 
-  // Medication dispense status (reuse allMeds data with fuller breakdown)
+  // Medications per encounter — how many meds were dispensed per hospital encounter
   {
-    const m    = _tally(allMeds, "status");
-    const keys = Object.keys(m);
-    const pal  = { completed: "#58a6ff", active: "#3fb950", stopped: "#f85149", "on-hold": "#ffa657", unknown: "#484f58", cancelled: "#f87171" };
-    _mkBar("chartP_medDispStatus", keys, [{
-      data: keys.map(k => m[k]),
-      backgroundColor: keys.map(k => (pal[k] || "#79c0ff") + "44"),
-      borderColor:     keys.map(k =>  pal[k] || "#79c0ff"),
-      borderWidth: 1.5, borderRadius: 3,
-    }], { plugins: { legend: { display: false } } });
+    const counts = allEncs
+      .map(e => (e.encounterData?.medications || []).length)
+      .filter(n => n > 0);
+    const bins = { "1–3": 0, "4–7": 0, "8–15": 0, "16–30": 0, ">30": 0 };
+    counts.forEach(n => {
+      if      (n <= 3)  bins["1–3"]++;
+      else if (n <= 7)  bins["4–7"]++;
+      else if (n <= 15) bins["8–15"]++;
+      else if (n <= 30) bins["16–30"]++;
+      else              bins[">30"]++;
+    });
+    const keys = Object.keys(bins);
+    _mkVBar("chartP_medDispStatus", keys, keys.map(k => bins[k]), "#818cf8", {
+      plugins: { tooltip: { callbacks: { label: c => ` ${c.raw} encounter${c.raw !== 1 ? "s" : ""}` } } },
+    });
   }
 
   // ── G extra: Vitals per patient, Notes per patient ──────────────────────────
