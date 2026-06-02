@@ -2,6 +2,8 @@
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let currentData = null;
+const _charts     = {};
+const _encDataMap = {};
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -147,6 +149,7 @@ function render(d) {
   renderValidation(d);
   renderEncounters(d.encounters);
   renderNotes(d.notes || []);
+  renderAnalytics(d);
 }
 
 // ── Info bar ──────────────────────────────────────────────────────────────────
@@ -400,6 +403,10 @@ function renderValidation(d) {
 
 // ── Encounters ────────────────────────────────────────────────────────────────
 function renderEncounters(encounters) {
+  // Destroy old per-encounter charts and clear data map
+  Object.keys(_charts).filter(k => k.startsWith("encChart_")).forEach(k => _destroyChart(k));
+  Object.keys(_encDataMap).forEach(k => delete _encDataMap[k]);
+
   const total = encounters.reduce((n, e) => n + 1 + e.children.length, 0);
   $("encTotal").textContent = `${total} encounter${total !== 1 ? "s" : ""}`;
 
@@ -408,6 +415,9 @@ function renderEncounters(encounters) {
     $("encountersEmpty").classList.remove("hidden");
     return;
   }
+
+  // Store encounter data for lazy chart rendering
+  encounters.forEach((enc, idx) => { _encDataMap[idx] = enc; });
 
   el.innerHTML = encounters.map((enc, idx) => {
     const cls         = enc.cls === "IMP" ? "Inpatient" : (enc.cls === "ACUTE" ? "ICU" : enc.cls);
@@ -470,8 +480,94 @@ function renderEncounters(encounters) {
           : ""}
       </div>`;
 
+    // ── Per-encounter chart canvas section ──────────────────────────────────
+    const _dedupVitals = (() => {
+      const m = {};
+      (ed.vitals || []).forEach(v => {
+        if (!m[v.name] || v.raw > m[v.name].raw) m[v.name] = v;
+      });
+      return Object.values(m).sort((a, b) => a.name.localeCompare(b.name));
+    })();
+    const _dedupLabs = (() => {
+      const m = {};
+      (ed.labs || []).forEach(l => {
+        if (!m[l.name] || l.rawDt > m[l.name].rawDt) m[l.name] = l;
+      });
+      return Object.values(m).filter(l => typeof l.value === "number");
+    })();
+    const _hasDxChart   = (ed.conditions || []).length > 1;
+    const _labsH        = Math.max(180, Math.min(_dedupLabs.length, 40) * 22 + 40);
+    const _dxH          = Math.max(100, (ed.conditions || []).length * 30);
+    // Vitals trend — needs ≥2 readings of same vital with a known normal range
+    const _hasVtrend = (() => {
+      const m = {};
+      (ed.vitals || []).forEach(v => { if (v.normalRange) m[v.name] = (m[v.name] || 0) + 1; });
+      return Object.values(m).some(n => n >= 2);
+    })();
+    // Lab vs reference range — deduplicated labs that have refLow/refHigh
+    const _refLabs = (() => {
+      const m = {};
+      (ed.labs || []).forEach(l => { if (!m[l.name] || l.rawDt > m[l.name].rawDt) m[l.name] = l; });
+      return Object.values(m)
+        .filter(l => l.refLow != null && l.refHigh != null && typeof l.value === "number")
+        .slice(0, 30);
+    })();
+    const _hasRefNorm = _refLabs.length > 0;
+    const _refNormH   = Math.max(180, _refLabs.length * 22 + 40);
+
+    const encChartSection = `
+    <div class="enc-charts-block">
+      <div class="enc-charts-block-header">
+        <i class="fas fa-chart-column"></i> Charts &amp; Plots
+      </div>
+      <div class="enc-charts-grid-top">
+        ${_dedupVitals.length ? `
+        <div class="enc-chart-card">
+          <div class="enc-chart-label"><i class="fas fa-heart-pulse" style="color:#f87171;"></i> Vital Signs <span class="enc-chart-hint">latest per type · red = abnormal</span></div>
+          <div style="height:${Math.max(140, _dedupVitals.length * 32)}px;position:relative;">
+            <canvas id="encChart_vitals_${idx}"></canvas>
+          </div>
+        </div>` : ""}
+        ${nLabs > 0 ? `
+        <div class="enc-chart-card">
+          <div class="enc-chart-label"><i class="fas fa-flag" style="color:#818cf8;"></i> Lab Flag Distribution</div>
+          <div style="height:200px;position:relative;">
+            <canvas id="encChart_flags_${idx}"></canvas>
+          </div>
+        </div>` : ""}
+      </div>
+      ${_dedupLabs.length ? `
+      <div class="enc-chart-card">
+        <div class="enc-chart-label"><i class="fas fa-flask-vial" style="color:#818cf8;"></i> Lab Values <span class="enc-chart-hint">latest per test · sorted by severity · top 40</span></div>
+        <div style="height:${_labsH}px;position:relative;">
+          <canvas id="encChart_labs_${idx}"></canvas>
+        </div>
+      </div>` : ""}
+      ${_hasDxChart ? `
+      <div class="enc-chart-card" style="margin-top:0.75rem;">
+        <div class="enc-chart-label"><i class="fas fa-stethoscope" style="color:#fb7185;"></i> Diagnoses</div>
+        <div style="height:${_dxH}px;position:relative;">
+          <canvas id="encChart_dx_${idx}"></canvas>
+        </div>
+      </div>` : ""}
+      ${_hasVtrend ? `
+      <div class="enc-chart-card" style="margin-top:0.75rem;">
+        <div class="enc-chart-label"><i class="fas fa-chart-line" style="color:#58a6ff;"></i> Vitals Trend <span class="enc-chart-hint">normalised % of normal range · all readings over time</span></div>
+        <div style="height:280px;position:relative;">
+          <canvas id="encChart_vtrend_${idx}"></canvas>
+        </div>
+      </div>` : ""}
+      ${_hasRefNorm ? `
+      <div class="enc-chart-card" style="margin-top:0.75rem;">
+        <div class="enc-chart-label"><i class="fas fa-ruler" style="color:#3fb950;"></i> Lab vs Reference Range <span class="enc-chart-hint">0–100 % = within range · red = outside · sorted by severity</span></div>
+        <div style="height:${_refNormH}px;position:relative;">
+          <canvas id="encChart_refnorm_${idx}"></canvas>
+        </div>
+      </div>` : ""}
+    </div>`;
+
     return `
-    <div class="enc-card">
+    <div class="enc-card" data-enc-idx="${idx}">
       <!-- ── Header ── -->
       <div class="enc-header" onclick="toggleEnc(this)">
         <div class="${numBadge}">${idx + 1}</div>
@@ -546,6 +642,10 @@ function renderEncounters(encounters) {
           ${(ed.notes?.length) ? encSectionNotes(ed.notes) : ""}
 
         </div>
+
+        <!-- ── Per-encounter charts (lazy) ── -->
+        ${encChartSection}
+
       </div>
     </div>`;
   }).join("");
@@ -867,11 +967,18 @@ function encEmpty(msg) {
 }
 
 function toggleEnc(header) {
+  const card    = header.parentElement;
   const body    = header.nextElementSibling;
   const chevron = header.querySelector(".enc-chevron");
   const open    = !body.classList.contains("hidden");
   body.classList.toggle("hidden", open);
   chevron.style.transform = open ? "" : "rotate(180deg)";
+  // Lazy-render per-encounter charts on first open
+  if (!open && body.dataset.chartsInit !== "1") {
+    body.dataset.chartsInit = "1";
+    const idx = parseInt(card.dataset.encIdx, 10);
+    if (!isNaN(idx)) _renderEncCharts(idx);
+  }
 }
 
 // ── Clinical Notes tab ────────────────────────────────────────────────────────
@@ -988,6 +1095,762 @@ function encSectionNotes(notes) {
   return `<div class="enc-section enc-section-full">${header}${body}</div>`;
 }
 
+// ── Per-encounter chart renderer (lazy — called on first card expand) ─────────
+function _renderEncCharts(idx) {
+  const enc = _encDataMap[idx];
+  if (!enc) return;
+  const ed     = enc.encounterData || {};
+  const labs   = ed.labs        || [];
+  const vitals = ed.vitals      || [];
+  const conds  = ed.conditions  || [];
+
+  const _FC = { Normal: "#3fb950", H: "#ffa657", HH: "#f85149", L: "#79c0ff", LL: "#58a6ff", A: "#ff7b72" };
+  const _flagKey = f => (!f || f === "N") ? "Normal" : f;
+
+  // Deduplicate vitals — latest observation per vital name
+  const vitalMap = {};
+  vitals.forEach(v => { if (!vitalMap[v.name] || v.raw > vitalMap[v.name].raw) vitalMap[v.name] = v; });
+  const dVitals = Object.values(vitalMap).sort((a, b) => a.name.localeCompare(b.name));
+
+  // Deduplicate labs — latest per test name, numeric only
+  const labMap = {};
+  labs.forEach(l => { if (!labMap[l.name] || l.rawDt > labMap[l.name].rawDt) labMap[l.name] = l; });
+  const allDedupLabs = Object.values(labMap);
+
+  // Sort labs: HH/LL → H/L → A → others, then alpha; cap at 40
+  const _sev = f => ({ HH: 0, LL: 0, H: 1, L: 1, A: 2 }[f] ?? ((!f || f === "N") ? 4 : 3));
+  const dLabs = allDedupLabs
+    .filter(l => typeof l.value === "number")
+    .sort((a, b) => _sev(a.flag) - _sev(b.flag) || a.name.localeCompare(b.name))
+    .slice(0, 40);
+
+  // ── Vitals horizontal bar ──────────────────────────────────────────────────
+  if (dVitals.length) {
+    _mkBar(`encChart_vitals_${idx}`, dVitals.map(v => v.name), [{
+      data: dVitals.map(v => typeof v.value === "number" ? +v.value.toFixed(1) : parseFloat(v.value) || 0),
+      backgroundColor: dVitals.map(v => (v.status === "abnormal" ? "#f85149" : "#58a6ff") + "44"),
+      borderColor:     dVitals.map(v => v.status === "abnormal" ? "#f85149" : "#58a6ff"),
+      borderWidth: 1.5, borderRadius: 3,
+    }], {
+      horizontal: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => {
+          const v = dVitals[ctx.dataIndex];
+          const nr = v.normalRange ? `  normal: ${v.normalRange[0]}–${v.normalRange[1]}` : "";
+          return ` ${ctx.raw} ${v.unit}${nr}  (${v.status})`;
+        }}},
+      },
+    });
+  }
+
+  // ── Lab flag distribution bar ──────────────────────────────────────────────
+  if (allDedupLabs.length) {
+    const flagTally = {};
+    allDedupLabs.forEach(l => { const k = _flagKey(l.flag); flagTally[k] = (flagTally[k] || 0) + 1; });
+    const order = ["Normal","H","HH","L","LL","A"];
+    const present = order.filter(f => flagTally[f]);
+    _mkBar(`encChart_flags_${idx}`, present, [{
+      data: present.map(f => flagTally[f]),
+      backgroundColor: present.map(f => (_FC[f] || "#58a6ff") + "44"),
+      borderColor:     present.map(f => _FC[f] || "#58a6ff"),
+      borderWidth: 1.5, borderRadius: 3,
+    }], { plugins: { legend: { display: false } } });
+  }
+
+  // ── Lab values horizontal bar (colour = flag severity) ────────────────────
+  if (dLabs.length) {
+    _mkBar(`encChart_labs_${idx}`, dLabs.map(l => l.name.slice(0, 28)), [{
+      data: dLabs.map(l => +l.value.toFixed(2)),
+      backgroundColor: dLabs.map(l => (_FC[_flagKey(l.flag)] || "#3fb950") + "44"),
+      borderColor:     dLabs.map(l => _FC[_flagKey(l.flag)] || "#3fb950"),
+      borderWidth: 1.5, borderRadius: 3,
+    }], {
+      horizontal: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => {
+          const l = dLabs[ctx.dataIndex];
+          const ref = (l.refLow != null && l.refHigh != null) ? `  ref: ${l.refLow}–${l.refHigh}` : "";
+          return ` ${ctx.raw} ${l.unit}  [${l.flag || "normal"}]${ref}`;
+        }}},
+      },
+    });
+  }
+
+  // ── Diagnoses horizontal bar ───────────────────────────────────────────────
+  if (conds.length > 1) {
+    const dxColors = { active: "#f85149", resolved: "#3fb950", inactive: "#6e7681" };
+    _mkBar(`encChart_dx_${idx}`, conds.map(c => c.name.slice(0, 32)), [{
+      data: conds.map(() => 1),
+      backgroundColor: conds.map(c => (dxColors[c.status] || "#fb7185") + "44"),
+      borderColor:     conds.map(c => dxColors[c.status] || "#fb7185"),
+      borderWidth: 1.5, borderRadius: 3,
+    }], {
+      horizontal: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => {
+          const c = conds[ctx.dataIndex];
+          return ` ${c.codeSystem || ""} ${c.code || ""}  status: ${c.status}`;
+        }}},
+      },
+    });
+  }
+
+  // ── Vitals trend — normalised line chart (all readings over time) ──────────
+  {
+    const vByName = {};
+    vitals.forEach(v => {
+      if (v.normalRange) (vByName[v.name] = vByName[v.name] || []).push(v);
+    });
+    const trendEntries = Object.entries(vByName).filter(([, rs]) => rs.length >= 2);
+    if (trendEntries.length) {
+      const encStartMs = Date.parse((enc.start || "").replace(" ", "T"));
+      const palette = ["#58a6ff","#f87171","#3fb950","#ffa657","#c084fc","#79c0ff","#f85149","#4ade80","#d2a8ff"];
+      const datasets = trendEntries.map(([name, readings], i) => {
+        const [lo, hi] = readings[0].normalRange;
+        const range = hi - lo || 1;
+        const sorted = readings.slice().sort((a, b) => a.raw < b.raw ? -1 : 1);
+        return {
+          label: name,
+          data: sorted.map(v => ({
+            x: +((Date.parse(v.raw) - encStartMs) / 60000).toFixed(0),
+            y: +((v.value - lo) / range * 100).toFixed(1),
+          })),
+          borderColor: palette[i % palette.length],
+          backgroundColor: "transparent",
+          borderWidth: 2, pointRadius: 3, tension: 0.35, fill: false,
+        };
+      });
+      _destroyChart(`encChart_vtrend_${idx}`);
+      const cv = document.getElementById(`encChart_vtrend_${idx}`);
+      if (cv) {
+        _charts[`encChart_vtrend_${idx}`] = new Chart(cv, {
+          type: "line",
+          data: { datasets },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+              legend: { position: "bottom", labels: { color: "#8b949e", font: { size: 9 }, padding: 6, boxWidth: 10 } },
+              tooltip: { callbacks: { label: ctx =>
+                ` ${ctx.dataset.label}: ${ctx.parsed.y}% of range  at +${ctx.parsed.x} min` } },
+            },
+            scales: {
+              x: { type: "linear", ticks: { color: _TC, font: { size: 9 }, callback: v => v + "m" }, grid: { color: _GC },
+                   title: { display: true, text: "minutes from admission", color: _TC, font: { size: 9 } } },
+              y: { ticks: { color: _TC, font: { size: 9 }, callback: v => v + "%" }, grid: { color: _GC },
+                   title: { display: true, text: "% of normal range (0–100 = in range)", color: _TC, font: { size: 9 } } },
+            },
+          },
+        });
+      }
+    }
+  }
+
+  // ── Lab vs reference range — normalised horizontal bar ────────────────────
+  {
+    const labMap2 = {};
+    labs.forEach(l => { if (!labMap2[l.name] || l.rawDt > labMap2[l.name].rawDt) labMap2[l.name] = l; });
+    const refLabs = Object.values(labMap2)
+      .filter(l => l.refLow != null && l.refHigh != null && typeof l.value === "number")
+      .sort((a, b) => _sev(a.flag) - _sev(b.flag) || a.name.localeCompare(b.name))
+      .slice(0, 30);
+    if (refLabs.length) {
+      const pcts = refLabs.map(l => {
+        const range = l.refHigh - l.refLow || 1;
+        return +((l.value - l.refLow) / range * 100).toFixed(1);
+      });
+      _mkBar(`encChart_refnorm_${idx}`, refLabs.map(l => l.name.slice(0, 28)), [{
+        data: pcts,
+        backgroundColor: pcts.map(p => (p < 0 || p > 100) ? "#f8514944" : "#3fb95044"),
+        borderColor:     pcts.map(p => (p < 0 || p > 100) ? "#f85149"   : "#3fb950"),
+        borderWidth: 1.5, borderRadius: 3,
+      }], {
+        horizontal: true,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => {
+            const l = refLabs[ctx.dataIndex];
+            const s = ctx.raw < 0 ? "BELOW" : ctx.raw > 100 ? "ABOVE" : "in";
+            return ` ${ctx.raw}% (${s} range)  ${l.value} ${l.unit}  ref: ${l.refLow}–${l.refHigh}`;
+          }}},
+        },
+      });
+    }
+  }
+}
+
+// ── Charts — helpers ─────────────────────────────────────────────────────────
+const _GC = '#21262d';
+const _TC = '#6e7681';
+
+function _encLOS(enc) {
+  if (enc.los != null) return enc.los;
+  if (!enc.start || !enc.end) return null;
+  const ms = Date.parse(enc.end.replace(' ', 'T')) - Date.parse(enc.start.replace(' ', 'T'));
+  if (isNaN(ms) || ms < 0) return null;
+  return Math.round(ms / 864e5 * 10) / 10;
+}
+
+function _encTypeLabel(enc) {
+  if (enc.type) return enc.type;
+  if (enc.cls === 'IMP')  return 'Inpatient';
+  if (enc.cls === 'EMER') return 'Emergency';
+  if (enc.cls === 'AMB')  return 'Ambulatory';
+  return enc.cls || 'Other';
+}
+
+function _destroyChart(id) {
+  if (_charts[id]) { try { _charts[id].destroy(); } catch (_) {} delete _charts[id]; }
+}
+
+function _mkBar(id, labels, datasets, opts = {}) {
+  _destroyChart(id);
+  const cv = document.getElementById(id);
+  if (!cv) return;
+  _charts[id] = new Chart(cv, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, ...opts.plugins },
+      scales: {
+        x: { stacked: !!opts.stacked, ticks: { color: _TC, font: { size: 10 }, maxRotation: opts.rotateX || 0 }, grid: { color: _GC } },
+        y: { stacked: !!opts.stacked, beginAtZero: true, ticks: { color: _TC, font: { size: 10 } }, grid: { color: _GC }, ...opts.yAxis },
+      },
+      indexAxis: opts.horizontal ? 'y' : 'x',
+      ...opts.extra,
+    },
+  });
+}
+
+function _mkHBar(id, labels, values, color, opts = {}) {
+  _mkBar(id, labels, [{
+    data: values,
+    backgroundColor: color + '44',
+    borderColor: color,
+    borderWidth: 1.5,
+    borderRadius: 3,
+  }], { horizontal: true, ...opts });
+}
+
+function _mkVBar(id, labels, values, color, opts = {}) {
+  _mkBar(id, labels, [{
+    data: values,
+    backgroundColor: color + '44',
+    borderColor: color,
+    borderWidth: 1.5,
+    borderRadius: 3,
+    label: opts.label || '',
+  }], opts);
+}
+
+function _mkDonut(id, labels, values, colors) {
+  _destroyChart(id);
+  const cv = document.getElementById(id);
+  if (!cv || !labels.length) return;
+  _charts[id] = new Chart(cv, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{ data: values, backgroundColor: colors.map(c => c + '55'), borderColor: colors, borderWidth: 1.5, hoverOffset: 4 }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { color: '#8b949e', font: { size: 10 }, padding: 8, boxWidth: 12 } } },
+    },
+  });
+}
+
+function _tally(arr, key) {
+  const m = {};
+  arr.forEach(x => { const v = (key ? x[key] : x) || 'Unknown'; m[v] = (m[v] || 0) + 1; });
+  return m;
+}
+
+function _top(map, n = 20) {
+  return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, n);
+}
+
+// ── Master Analytics renderer ─────────────────────────────────────────────────
+function renderAnalytics(d) {
+  const encs  = d.encounters  || [];
+  const conds = d.conditions  || [];
+  const labs  = d.labs        || [];
+  const meds  = d.medications || [];
+  const procs = d.procedures  || [];
+  const vits  = d.vitals      || [];
+
+  // ── Section A: Encounter Analytics ──────────────────────────────────────────
+
+  // A1 — LOS horizontal bar (compute from start/end if no los field)
+  {
+    const rows = encs
+      .map((e, i) => ({ label: `#${i + 1}  ${(e.start || '').slice(0, 10)}`, los: _encLOS(e) }))
+      .filter(r => r.los != null);
+    if (rows.length) {
+      _mkHBar('chartA_los', rows.map(r => r.label), rows.map(r => r.los), '#58a6ff', {
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.raw} days` } } },
+      });
+    }
+  }
+
+  // A2 — Encounter class breakdown (bar)
+  {
+    const m = _tally(encs, null);
+    const labels = encs.reduce((acc, e) => {
+      const k = _encTypeLabel(e); acc[k] = (acc[k] || 0) + 1; return acc;
+    }, {});
+    const keys = Object.keys(labels);
+    const pal  = ['#58a6ff','#3fb950','#ffa657','#f85149','#d2a8ff','#79c0ff'];
+    _mkBar('chartA_types', keys, keys.map((k, i) => ({
+      label: k, data: [labels[k]], backgroundColor: pal[i % pal.length] + '44',
+      borderColor: pal[i % pal.length], borderWidth: 1.5, borderRadius: 3,
+    })), { plugins: { legend: { display: false } } });
+  }
+
+  // A3 — Records per encounter (stacked bar)
+  {
+    const labels = encs.map((_, i) => `#${i + 1}`);
+    const mk = (key, color) => ({
+      label: key.charAt(0).toUpperCase() + key.slice(1),
+      data: encs.map(e => (e.encounterData?.[key] || []).length),
+      backgroundColor: color + '55', borderColor: color, borderWidth: 1, stack: 'a', borderRadius: 2,
+    });
+    _mkBar('chartA_records', labels, [
+      mk('conditions',  '#fb7185'), mk('medications', '#c084fc'),
+      mk('labs',        '#818cf8'), mk('vitals',      '#f87171'),
+      mk('procedures',  '#4ade80'),
+    ], {
+      stacked: true,
+      plugins: { legend: { position: 'bottom', labels: { color: '#8b949e', font: { size: 9 }, padding: 6, boxWidth: 10 } }, tooltip: { mode: 'index', intersect: false } },
+    });
+  }
+
+  // A4 — Admit source distribution
+  {
+    const m = encs.reduce((acc, e) => { const s = e.admitSource || 'Unknown'; acc[s] = (acc[s] || 0) + 1; return acc; }, {});
+    const entries = _top(m, 10);
+    _mkHBar('chartA_admit', entries.map(e => e[0]), entries.map(e => e[1]), '#22d3ee');
+  }
+
+  // A5 — Encounter status bar
+  {
+    const m = _tally(encs.map(e => e.status));
+    const keys = Object.keys(m);
+    const sc = { finished: '#3fb950', 'in-progress': '#ffa657', unknown: '#484f58' };
+    _mkBar('chartA_status', keys, [{
+      data: keys.map(k => m[k]),
+      backgroundColor: keys.map(k => (sc[k] || '#58a6ff') + '44'),
+      borderColor: keys.map(k => sc[k] || '#58a6ff'),
+      borderWidth: 1.5, borderRadius: 3,
+    }], {});
+  }
+
+  // ── Section B: Diagnosis Analysis ───────────────────────────────────────────
+
+  // B1 — Diagnoses per encounter
+  {
+    const rows = encs
+      .map((e, i) => ({ label: `#${i + 1}`, n: conds.filter(c => c.encounterRef === e.id).length }))
+      .filter(r => r.n > 0);
+    _mkVBar('chartB_perEnc', rows.map(r => r.label), rows.map(r => r.n), '#fb7185');
+  }
+
+  // B2 — ICD system bar
+  {
+    const m = _tally(conds, 'codeSystem');
+    const pal = { 'ICD-10': '#58a6ff', 'ICD-9': '#ffa657', 'Unknown': '#484f58' };
+    const keys = Object.keys(m);
+    _mkBar('chartB_icd', keys, [{
+      data: keys.map(k => m[k]),
+      backgroundColor: keys.map(k => (pal[k] || '#79c0ff') + '44'),
+      borderColor: keys.map(k => pal[k] || '#79c0ff'),
+      borderWidth: 1.5, borderRadius: 3,
+    }], {});
+  }
+
+  // B3 — Diagnosis status bar
+  {
+    const m = _tally(conds, 'status');
+    const pal = { active: '#f85149', resolved: '#3fb950', inactive: '#6e7681', remission: '#ffa657', unknown: '#484f58' };
+    const keys = Object.keys(m);
+    _mkBar('chartB_status', keys.map(k => k.charAt(0).toUpperCase() + k.slice(1)), [{
+      data: keys.map(k => m[k]),
+      backgroundColor: keys.map(k => (pal[k] || '#58a6ff') + '44'),
+      borderColor: keys.map(k => pal[k] || '#58a6ff'),
+      borderWidth: 1.5, borderRadius: 3,
+    }], {});
+  }
+
+  // B4 — All diagnoses frequency (horizontal bar, sorted)
+  {
+    const m = _tally(conds, 'name');
+    const entries = _top(m, 25);
+    _mkHBar('chartB_top', entries.map(e => e[0]), entries.map(e => e[1]), '#d2a8ff', {
+      plugins: { tooltip: { callbacks: { label: c => ` ${c.raw} occurrence${c.raw !== 1 ? 's' : ''}` } } },
+    });
+  }
+
+  // ── Section C: Lab Results ───────────────────────────────────────────────────
+
+  // C1 — Lab flag distribution
+  {
+    const flags = ['Normal', 'H', 'HH', 'L', 'LL', 'A'];
+    const flagColors = { Normal: '#3fb950', H: '#ffa657', HH: '#f85149', L: '#79c0ff', LL: '#58a6ff', A: '#ff7b72' };
+    const m = {};
+    labs.forEach(l => {
+      const f = !l.flag || l.flag === 'N' ? 'Normal' : l.flag;
+      m[f] = (m[f] || 0) + 1;
+    });
+    const present = flags.filter(f => m[f]);
+    _mkBar('chartC_flags', present, [{
+      data: present.map(f => m[f] || 0),
+      backgroundColor: present.map(f => (flagColors[f] || '#58a6ff') + '44'),
+      borderColor: present.map(f => flagColors[f] || '#58a6ff'),
+      borderWidth: 1.5, borderRadius: 3,
+    }], { plugins: { legend: { display: false } } });
+  }
+
+  // C2 — Labs per encounter
+  {
+    const rows = encs
+      .map((e, i) => ({ label: `#${i + 1}`, n: (e.encounterData?.labs || []).length }))
+      .filter(r => r.n > 0);
+    _mkVBar('chartC_perEnc', rows.map(r => r.label), rows.map(r => r.n), '#818cf8');
+  }
+
+  // C3 — Abnormal labs horizontal bar
+  {
+    const abnormal = labs.filter(l => l.flag && l.flag !== 'N');
+    const flagColors = { H: '#ffa657', HH: '#f85149', L: '#79c0ff', LL: '#58a6ff', A: '#ff7b72' };
+    const entries = _top(_tally(abnormal, 'flag'), 10);
+    if (abnormal.length) {
+      _mkBar('chartC_abnormal', abnormal.map(l => l.name.slice(0, 30)), [{
+        data: abnormal.map(() => 1),
+        backgroundColor: abnormal.map(l => (flagColors[l.flag] || '#f85149') + '55'),
+        borderColor: abnormal.map(l => flagColors[l.flag] || '#f85149'),
+        borderWidth: 1.5, borderRadius: 3,
+      }], { horizontal: true, plugins: { legend: { display: false } } });
+    }
+  }
+
+  // C4 — All labs bar (latest values, coloured by flag)
+  {
+    const flagColors = { H: '#ffa657', HH: '#f85149', L: '#79c0ff', LL: '#58a6ff', A: '#ff7b72', N: '#3fb950' };
+    const numeric = labs.filter(l => typeof l.value === 'number');
+    if (numeric.length) {
+      _mkBar('chartC_allLabs', numeric.map(l => l.name.slice(0, 22)), [{
+        label: 'Value',
+        data: numeric.map(l => typeof l.value === 'number' ? +l.value.toFixed(2) : l.value),
+        backgroundColor: numeric.map(l => (flagColors[l.flag] || '#3fb950') + '44'),
+        borderColor: numeric.map(l => flagColors[l.flag] || '#3fb950'),
+        borderWidth: 1.5, borderRadius: 3,
+      }], {
+        horizontal: true,
+        plugins: { legend: { display: false }, tooltip: {
+          callbacks: { label: (ctx) => {
+            const l = numeric[ctx.dataIndex];
+            return ` ${ctx.raw} ${l.unit}  [flag: ${l.flag || '—'}]`;
+          }},
+        }},
+      });
+    }
+  }
+
+  // ── Section D: Vitals ────────────────────────────────────────────────────────
+
+  // D1 — Vital values horizontal bar, colour-coded by status
+  {
+    if (vits.length) {
+      _mkBar('chartD_vitals', vits.map(v => v.name), [{
+        data: vits.map(v => typeof v.value === 'number' ? +v.value.toFixed(1) : parseFloat(v.value) || 0),
+        backgroundColor: vits.map(v => (v.status === 'abnormal' ? '#f85149' : '#58a6ff') + '44'),
+        borderColor: vits.map(v => v.status === 'abnormal' ? '#f85149' : '#58a6ff'),
+        borderWidth: 1.5, borderRadius: 3,
+      }], {
+        horizontal: true,
+        plugins: { legend: { display: false }, tooltip: {
+          callbacks: { label: (ctx) => {
+            const v = vits[ctx.dataIndex];
+            const nr = v.normalRange ? `  range: ${v.normalRange[0]}–${v.normalRange[1]}` : '';
+            return ` ${ctx.raw} ${v.unit}${nr}  (${v.status})`;
+          }},
+        }},
+      });
+    }
+  }
+
+  // D2 — Normal vs abnormal vitals bar
+  {
+    const norm = vits.filter(v => v.status !== 'abnormal').length;
+    const abn  = vits.filter(v => v.status === 'abnormal').length;
+    _mkBar('chartD_vitalStatus', ['Normal', 'Abnormal'], [{
+      data: [norm, abn],
+      backgroundColor: ['#3fb95044', '#f8514944'],
+      borderColor: ['#3fb950', '#f85149'],
+      borderWidth: 1.5, borderRadius: 4,
+    }], {});
+  }
+
+  // ── Section E: Medications & Procedures ─────────────────────────────────────
+
+  // E1 — Medication status
+  {
+    const m = _tally(meds, 'status');
+    const pal = { active: '#3fb950', completed: '#58a6ff', stopped: '#f85149', 'on-hold': '#ffa657', unknown: '#484f58' };
+    const keys = Object.keys(m);
+    _mkBar('chartE_medStatus', keys, [{
+      data: keys.map(k => m[k]),
+      backgroundColor: keys.map(k => (pal[k] || '#79c0ff') + '44'),
+      borderColor: keys.map(k => pal[k] || '#79c0ff'),
+      borderWidth: 1.5, borderRadius: 3,
+    }], {});
+  }
+
+  // E2 — Procedures per encounter
+  {
+    const rows = encs
+      .map((e, i) => ({ label: `#${i + 1}`, n: (e.encounterData?.procedures || []).length }))
+      .filter(r => r.n > 0);
+    _mkVBar('chartE_procsPerEnc', rows.map(r => r.label), rows.map(r => r.n), '#4ade80');
+  }
+
+  // E3 — Medication routes
+  {
+    const m = _tally(meds.map(m => m.route || 'Unknown'));
+    const entries = _top(m, 10);
+    _mkHBar('chartE_medRoutes', entries.map(e => e[0]), entries.map(e => e[1]), '#c084fc');
+  }
+
+  // E4 — Top medications horizontal bar
+  {
+    const m = _tally(meds, 'name');
+    const entries = _top(m, 20);
+    _mkHBar('chartE_topMeds', entries.map(e => e[0].slice(0, 35)), entries.map(e => e[1]), '#a78bfa', {
+      plugins: { tooltip: { callbacks: { label: c => ` ${c.raw} occurrence${c.raw !== 1 ? 's' : ''}` } } },
+    });
+  }
+
+  // E5 — Top procedures horizontal bar
+  {
+    const m = _tally(procs, 'name');
+    const entries = _top(m, 20);
+    _mkHBar('chartE_topProcs', entries.map(e => e[0].slice(0, 35)), entries.map(e => e[1]), '#4ade80', {
+      plugins: { tooltip: { callbacks: { label: c => ` ${c.raw} occurrence${c.raw !== 1 ? 's' : ''}` } } },
+    });
+  }
+
+  // ── Section F: Temporal Analysis ────────────────────────────────────────────
+
+  const _toMs = s => s ? Date.parse(s.replace(' ', 'T')) : NaN;
+
+  // F1 — Encounter timeline (floating bar — Gantt style)
+  {
+    const epoch = Math.min(...encs.map(e => _toMs(e.start)).filter(n => !isNaN(n)));
+    const toDays = ms => isNaN(ms) ? null : +((ms - epoch) / 864e5).toFixed(2);
+    const clsPal = e =>
+      e.cls === 'IMP'  ? '#58a6ff' :
+      e.cls === 'EMER' ? '#f85149' :
+      e.cls === 'AMB'  ? '#3fb950' : '#ffa657';
+    const rows = encs.map(e => {
+      const s = toDays(_toMs(e.start)), en = toDays(_toMs(e.end));
+      return (s != null && en != null) ? [s, en <= s ? s + 0.05 : en] : null;
+    });
+    if (rows.some(Boolean)) {
+      _destroyChart('chartF_timeline');
+      const cv = document.getElementById('chartF_timeline');
+      if (cv) {
+        _charts['chartF_timeline'] = new Chart(cv, {
+          type: 'bar',
+          data: {
+            labels: encs.map((e, i) => `#${i+1}  ${(e.start||'').slice(0,10)}`),
+            datasets: [{
+              data: rows,
+              backgroundColor: encs.map(e => clsPal(e) + '55'),
+              borderColor:     encs.map(e => clsPal(e)),
+              borderWidth: 1.5, borderRadius: 3,
+            }],
+          },
+          options: {
+            indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: { callbacks: { label: ctx => {
+                const e = encs[ctx.dataIndex];
+                const los = _encLOS(e);
+                return ` ${e.start || '?'} → ${e.end || 'ongoing'}${los != null ? `  (${los} days)` : ''}`;
+              }}},
+            },
+            scales: {
+              x: { ticks: { color: _TC, font: { size: 10 } }, grid: { color: _GC },
+                   title: { display: true, text: 'Days since first encounter', color: _TC, font: { size: 10 } } },
+              y: { ticks: { color: _TC, font: { size: 9 } }, grid: { color: _GC } },
+            },
+          },
+        });
+      }
+    }
+  }
+
+  // F2 — Encounters by hour of day
+  {
+    const hours = new Array(24).fill(0);
+    encs.forEach(e => {
+      const ms = _toMs(e.start);
+      if (!isNaN(ms)) hours[new Date(ms).getUTCHours()]++;
+    });
+    const hLabels = Array.from({length: 24}, (_, i) => `${String(i).padStart(2,'0')}h`);
+    _mkVBar('chartF_hour', hLabels, hours, '#38bdf8', { rotateX: 45 });
+  }
+
+  // F3 — Encounters by day of week
+  {
+    const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    const dow = new Array(7).fill(0);
+    encs.forEach(e => {
+      const ms = _toMs(e.start);
+      if (!isNaN(ms)) dow[(new Date(ms).getUTCDay() + 6) % 7]++;
+    });
+    _mkVBar('chartF_dow', days, dow, '#818cf8');
+  }
+
+  // ── Section G: Vitals Deep Dive ──────────────────────────────────────────────
+
+  // G1 — Cross-encounter vitals (grouped bar)
+  {
+    const vNames = [...new Set(encs.flatMap(e =>
+      (e.encounterData?.vitals || []).map(v => v.name)
+    ))].sort();
+    if (vNames.length) {
+      const palette = ['#58a6ff','#f87171','#3fb950','#ffa657','#c084fc','#79c0ff','#f85149','#4ade80'];
+      const datasets = encs.map((e, i) => {
+        const vMap = {};
+        (e.encounterData?.vitals || []).forEach(v => {
+          if (!vMap[v.name] || v.raw > vMap[v.name].raw) vMap[v.name] = v;
+        });
+        return {
+          label: `Enc #${i+1}`,
+          data: vNames.map(n => vMap[n] && typeof vMap[n].value === 'number' ? +vMap[n].value.toFixed(1) : null),
+          backgroundColor: palette[i % palette.length] + '44',
+          borderColor:     palette[i % palette.length],
+          borderWidth: 1.5, borderRadius: 2,
+        };
+      });
+      _mkBar('chartG_crossEnc', vNames, datasets, {
+        plugins: {
+          legend: { position: 'bottom', labels: { color: '#8b949e', font: { size: 9 }, padding: 6, boxWidth: 10 } },
+          tooltip: { mode: 'index', intersect: false },
+        },
+      });
+    }
+  }
+
+  // G2 — Normal vs abnormal vitals per encounter (stacked bar)
+  {
+    const gLabels = encs.map((_, i) => `Enc #${i+1}`);
+    _mkBar('chartG_vitalStatus', gLabels, [
+      { label: 'Normal',   data: encs.map(e => (e.encounterData?.vitals||[]).filter(v => v.status !== 'abnormal').length), backgroundColor: '#3fb95044', borderColor: '#3fb950', borderWidth: 1.5, borderRadius: 2, stack: 'a' },
+      { label: 'Abnormal', data: encs.map(e => (e.encounterData?.vitals||[]).filter(v => v.status === 'abnormal').length), backgroundColor: '#f8514944', borderColor: '#f85149', borderWidth: 1.5, borderRadius: 2, stack: 'a' },
+    ], {
+      stacked: true,
+      plugins: {
+        legend: { position: 'bottom', labels: { color: '#8b949e', font: { size: 10 }, padding: 8, boxWidth: 12 } },
+        tooltip: { mode: 'index', intersect: false },
+      },
+    });
+  }
+
+  // ── Section H: Lab Reference Analysis ───────────────────────────────────────
+
+  // H1 — Reference range compliance per encounter (stacked: below / in / above)
+  {
+    const hLabels = encs.map((_, i) => `Enc #${i+1}`);
+    const below   = encs.map(e => (e.encounterData?.labs||[]).filter(l => l.refLow  != null && typeof l.value === 'number' && l.value < l.refLow).length);
+    const inRange = encs.map(e => (e.encounterData?.labs||[]).filter(l => l.refLow  != null && l.refHigh != null && typeof l.value === 'number' && l.value >= l.refLow && l.value <= l.refHigh).length);
+    const above   = encs.map(e => (e.encounterData?.labs||[]).filter(l => l.refHigh != null && typeof l.value === 'number' && l.value > l.refHigh).length);
+    _mkBar('chartH_refRange', hLabels, [
+      { label: 'Below',   data: below,   backgroundColor: '#79c0ff44', borderColor: '#79c0ff', borderWidth: 1.5, borderRadius: 2, stack: 'a' },
+      { label: 'In range',data: inRange, backgroundColor: '#3fb95044', borderColor: '#3fb950', borderWidth: 1.5, borderRadius: 2, stack: 'a' },
+      { label: 'Above',   data: above,   backgroundColor: '#f8514944', borderColor: '#f85149', borderWidth: 1.5, borderRadius: 2, stack: 'a' },
+    ], {
+      stacked: true,
+      plugins: {
+        legend: { position: 'bottom', labels: { color: '#8b949e', font: { size: 10 }, padding: 8, boxWidth: 12 } },
+        tooltip: { mode: 'index', intersect: false },
+      },
+    });
+  }
+
+  // H2 — Abnormal lab rate % per encounter
+  {
+    const hLabels = encs.map((_, i) => `Enc #${i+1}`);
+    const rates = encs.map(e => {
+      const el = e.encounterData?.labs || [];
+      if (!el.length) return 0;
+      return +(el.filter(l => l.flag && l.flag !== 'N' && l.flag !== '').length / el.length * 100).toFixed(1);
+    });
+    _destroyChart('chartH_abnRate');
+    const cv = document.getElementById('chartH_abnRate');
+    if (cv) {
+      _charts['chartH_abnRate'] = new Chart(cv, {
+        type: 'bar',
+        data: {
+          labels: hLabels,
+          datasets: [{
+            label: '% abnormal',
+            data: rates,
+            backgroundColor: rates.map(r => (r > 50 ? '#f85149' : r > 20 ? '#ffa657' : '#3fb950') + '44'),
+            borderColor:     rates.map(r =>  r > 50 ? '#f85149' : r > 20 ? '#ffa657' : '#3fb950'),
+            borderWidth: 1.5, borderRadius: 3,
+          }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: ctx => ` ${ctx.raw}% of labs flagged abnormal` } },
+          },
+          scales: {
+            x: { ticks: { color: _TC, font: { size: 10 } }, grid: { color: _GC } },
+            y: { beginAtZero: true, max: 100, ticks: { color: _TC, font: { size: 10 }, callback: v => v + '%' }, grid: { color: _GC } },
+          },
+        },
+      });
+    }
+  }
+
+  // ── Section I: Admission, Discharge & Notes ──────────────────────────────────
+
+  // I1 — Discharge disposition horizontal bar
+  {
+    const m = encs.reduce((acc, e) => { if (e.dischDisp) acc[e.dischDisp] = (acc[e.dischDisp]||0)+1; return acc; }, {});
+    const entries = _top(m, 10);
+    _mkHBar('chartI_dischDisp', entries.map(e => e[0].slice(0,30)), entries.map(e => e[1]), '#34d399');
+  }
+
+  // I2 — Clinical note types
+  {
+    const m = _tally(d.notes || [], 'typeDisplay');
+    const entries = _top(m, 10);
+    _mkHBar('chartI_noteTypes', entries.map(e => e[0]), entries.map(e => e[1]), '#22d3ee');
+  }
+
+  // I3 — Notes + Reports per encounter (grouped bar)
+  {
+    const iLabels = encs.map((_, i) => `Enc #${i+1}`);
+    _mkBar('chartI_notesPerEnc', iLabels, [
+      { label: 'Notes',   data: encs.map(e => (e.encounterData?.notes||[]).length),            backgroundColor: '#34d39944', borderColor: '#34d399', borderWidth: 1.5, borderRadius: 2 },
+      { label: 'Reports', data: encs.map(e => (e.encounterData?.diagnosticReports||[]).length), backgroundColor: '#38bdf844', borderColor: '#38bdf8', borderWidth: 1.5, borderRadius: 2 },
+    ], {
+      plugins: {
+        legend: { position: 'bottom', labels: { color: '#8b949e', font: { size: 10 }, padding: 8, boxWidth: 12 } },
+        tooltip: { mode: 'index', intersect: false },
+      },
+    });
+  }
+}
 // ── Utility ───────────────────────────────────────────────────────────────────
 function esc(str) {
   if (str == null) return "";
