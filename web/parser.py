@@ -328,6 +328,20 @@ def _encounters(encs: list) -> list:
         ins = exts.get("http://mimic.mit.edu/fhir/StructureDefinition/insurance", {}).get("valueString", "")
         los = exts.get("http://mimic.mit.edu/fhir/StructureDefinition/los", {}).get("valueDecimal")
 
+        svc = e.get("serviceType", {})
+        svc_codings = svc.get("coding", []) if svc else []
+        svc_label = ""
+        if svc_codings:
+            c0 = svc_codings[0]
+            code = c0.get("code", "")
+            display = c0.get("display", "")
+            if code and display:
+                svc_label = f"{code}/{display}"
+            elif display:
+                svc_label = display
+            elif code:
+                svc_label = code
+
         row = {
             "id": "urn:uuid:" + e.get("id", ""),
             "cls": cls,
@@ -336,6 +350,7 @@ def _encounters(encs: list) -> list:
             "start": fmt_dt(period.get("start")),
             "end": fmt_dt(period.get("end")),
             "rawStart": period.get("start", ""),
+            "serviceType": svc_label,
             "location": locs[0].get("location", {}).get("display", "") if locs else "",
             "admitSource": concept_text(hosp_info.get("admitSource", {})),
             "dischDisp": concept_text(hosp_info.get("dischargeDisposition", {})),

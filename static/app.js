@@ -613,6 +613,7 @@ function renderEncounters(encounters) {
           ${encDetail("fa-door-closed",  "#6e7681", "Discharge Dispo", enc.dischDisp)}
           ${encDetail("fa-shield-halved","#6e7681", "Insurance",       enc.insurance)}
           ${encDetail("fa-clock",        "#6e7681", "Location",        enc.location)}
+          ${enc.serviceType ? encDetail("fa-stethoscope", "#6e7681", "Service", enc.serviceType) : ""}
         </div>
 
         <!-- ICU stays -->
@@ -1356,6 +1357,9 @@ const _CHART_LABELS = {
   chartA_records:     ['Encounter #',             'Records'],
   chartA_admit:       ['Count',                    null],               // hbar
   chartA_status:      ['Status',                  'Encounters'],
+  chartA_serviceType: ['Count',                    null],               // hbar
+  chartA_location:    ['Count',                    null],               // hbar
+  chartP_serviceType: ['Count',                    null],               // hbar
   chartB_perEnc:      ['Encounter #',             'Diagnoses'],
   chartB_icd:         ['ICD Code System',          'Conditions'],
   chartB_status:      ['Diagnosis Status',         'Conditions'],
@@ -1616,6 +1620,36 @@ function renderAnalytics(d) {
       borderColor: keys.map(k => sc[k] || '#58a6ff'),
       borderWidth: 1.5, borderRadius: 3,
     }], {});
+  }
+
+  // A6 — Service type (category) distribution
+  {
+    const m = encs.reduce((acc, e) => {
+      const svc = e.serviceType || 'Unknown';
+      acc[svc] = (acc[svc] || 0) + 1;
+      return acc;
+    }, {});
+    const entries = _top(m, 15);
+    if (entries.length) {
+      _mkHBar('chartA_serviceType', entries.map(e => e[0]), entries.map(e => e[1]), '#a78bfa', {
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.raw} encounter${c.raw !== 1 ? 's' : ''}` } } },
+      });
+    }
+  }
+
+  // A7 — Care location distribution
+  {
+    const m = encs.reduce((acc, e) => {
+      const loc = e.location || 'Unknown';
+      acc[loc] = (acc[loc] || 0) + 1;
+      return acc;
+    }, {});
+    const entries = _top(m, 15);
+    if (entries.length) {
+      _mkHBar('chartA_location', entries.map(e => e[0]), entries.map(e => e[1]), '#34d399', {
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.raw} encounter${c.raw !== 1 ? 's' : ''}` } } },
+      });
+    }
   }
 
   // ── Section B: Diagnosis Analysis ───────────────────────────────────────────
@@ -2251,6 +2285,24 @@ function _renderPopulationCharts(all) {
     allEncs.forEach(e => { if (e.dischDisp) m[e.dischDisp] = (m[e.dischDisp] || 0) + 1; });
     const entries = _top(m, 10);
     _mkHBar("chartP_dischDisp", entries.map(e => e[0].slice(0, 35)), entries.map(e => e[1]), "#34d399");
+  }
+
+  // Service type (category) distribution across all encounters
+  {
+    const m = {};
+    allEncs.forEach(e => {
+      const svc = e.serviceType || 'Unknown';
+      if (svc) m[svc] = (m[svc] || 0) + 1;
+    });
+    const entries = _top(m, 20);
+    if (entries.length) {
+      _mkHBar("chartP_serviceType",
+        entries.map(e => e[0]),
+        entries.map(e => e[1]),
+        "#a78bfa", {
+          plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.raw} encounter${c.raw !== 1 ? "s" : ""}` } } },
+        });
+    }
   }
 
   // ── D: Diagnosis Landscape ───────────────────────────────────────────────────
