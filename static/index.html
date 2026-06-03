@@ -596,7 +596,7 @@
               </div>
             </section>
           </div>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
             <section class="card">
               <div class="card-header" style="background:linear-gradient(135deg,#1c3545 0%,#164e63 100%);">
                 <div class="header-icon-wrap"><i class="fas fa-door-open"></i></div>
@@ -613,6 +613,28 @@
               </div>
               <div class="p-4" style="height:220px;position:relative;">
                 <canvas id="chartA_status"></canvas>
+              </div>
+            </section>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#1a1040 0%,#4c1d95 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-tag"></i></div>
+                <span>Service Type (Categories)</span>
+                <span class="ml-auto text-violet-200/60 text-xs font-normal">by encounter</span>
+              </div>
+              <div class="p-4" style="height:220px;position:relative;">
+                <canvas id="chartA_serviceType"></canvas>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#1c2f1e 0%,#14532d 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-location-dot"></i></div>
+                <span>Care Location Distribution</span>
+                <span class="ml-auto text-emerald-200/60 text-xs font-normal">by encounter</span>
+              </div>
+              <div class="p-4" style="height:220px;position:relative;">
+                <canvas id="chartA_location"></canvas>
               </div>
             </section>
           </div>
@@ -1052,6 +1074,18 @@
           <h2 class="analytics-section-title">
             <i class="fas fa-calendar-days"></i> Population Encounter Analytics
           </h2>
+          <div class="grid grid-cols-1 mb-5">
+            <section class="card">
+              <div class="card-header" style="background:linear-gradient(135deg,#1a1040 0%,#4c1d95 100%);">
+                <div class="header-icon-wrap"><i class="fas fa-tag"></i></div>
+                <span>Service Type (Category) Distribution</span>
+                <span class="ml-auto text-violet-200/60 text-xs font-normal">across all encounters</span>
+              </div>
+              <div class="p-4" style="height:280px;position:relative;">
+                <canvas id="chartP_serviceType"></canvas>
+              </div>
+            </section>
+          </div>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-5">
             <section class="card">
               <div class="card-header" style="background:linear-gradient(135deg,#1e1b4b 0%,#312e81 100%);">
