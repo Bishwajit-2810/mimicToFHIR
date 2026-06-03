@@ -613,6 +613,7 @@ function renderEncounters(encounters) {
           ${encDetail("fa-door-closed",  "#6e7681", "Discharge Dispo", enc.dischDisp)}
           ${encDetail("fa-shield-halved","#6e7681", "Insurance",       enc.insurance)}
           ${encDetail("fa-clock",        "#6e7681", "Location",        enc.location)}
+          ${enc.serviceType ? encDetail("fa-stethoscope", "#6e7681", "Service", enc.serviceType) : ""}
         </div>
 
         <!-- ICU stays -->
