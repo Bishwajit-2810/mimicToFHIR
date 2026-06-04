@@ -1,10 +1,12 @@
 """
 golddata_app.py — GoldData FHIR Dashboard
 
-Serves golddata_fhir_bundles/ on port 8096 using the same static/ UI as app.py.
+Serves the blinded ("gold") view on port 8096 using the same static/ UI as app.py.
+Both dashboards now read live from the `mimic_pg` Docker PostgreSQL database
+instead of pre-generated JSON files:
 
-  Port 8095  →  web.app          reads fhir_bundles/          (full clinical data)
-  Port 8096  →  web.golddata_app reads golddata_fhir_bundles/ (all diagnoses & medications excluded)
+  Port 8095  →  web.app          full clinical data        (PostgreSQL → bundle live)
+  Port 8096  →  web.golddata_app blinded latest encounter  (PostgreSQL → bundle live)
 
 Start:
     uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
@@ -13,7 +15,6 @@ Start:
 import json
 import subprocess
 import sys
-import uuid
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -22,15 +23,14 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from etl.golddata_fhir_gen import build_patient_bundle as build_gold_bundle
+from etl.mimic_to_bundle import build_patient_bundle as build_full_bundle, _sanitize_for_json
+from .db import connect, dict_cursor, list_subject_ids, patient_count
 from .parser import parse_bundle, concept_text
 
 app = FastAPI(title="GoldData FHIR Dashboard")
 
-BUNDLES_DIR = Path("golddata_fhir_bundles")
-STD_BUNDLES_DIR = Path("fhir_bundles")
 STATIC_DIR = Path("static")
-
-_STD_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
 _running: dict[str, dict] = {}
 
@@ -74,22 +74,45 @@ def _excluded_conditions(std_bundle: dict) -> list[dict]:
     return excluded
 
 
-@lru_cache(maxsize=20)
-def _read_bundle(patient_id: str) -> dict:
-    path = BUNDLES_DIR / f"{patient_id}.json"
-    if not path.exists():
-        raise FileNotFoundError(patient_id)
-    with open(path) as f:
-        return json.load(f)
+def _sanitized(bundle: dict) -> dict:
+    """Round-trip a bundle so it matches what the file pipeline would have written."""
+    return json.loads(json.dumps(_sanitize_for_json(bundle), default=str))
 
 
-@lru_cache(maxsize=20)
-def _read_std_bundle(patient_id: str) -> dict:
-    path = STD_BUNDLES_DIR / f"{patient_id}.json"
-    if not path.exists():
+@lru_cache(maxsize=64)
+def _gold_bundle(patient_id: str) -> dict:
+    try:
+        sid = int(patient_id)
+    except ValueError:
         raise FileNotFoundError(patient_id)
-    with open(path) as f:
-        return json.load(f)
+    conn = connect()
+    try:
+        cur = dict_cursor(conn)
+        bundle, _ = build_gold_bundle(cur, sid, include_notes=False)
+        cur.close()
+    finally:
+        conn.close()
+    if bundle is None:
+        raise FileNotFoundError(patient_id)
+    return _sanitized(bundle)
+
+
+@lru_cache(maxsize=64)
+def _std_bundle(patient_id: str) -> dict:
+    try:
+        sid = int(patient_id)
+    except ValueError:
+        raise FileNotFoundError(patient_id)
+    conn = connect()
+    try:
+        cur = dict_cursor(conn)
+        bundle = build_full_bundle(cur, sid)
+        cur.close()
+    finally:
+        conn.close()
+    if bundle is None:
+        raise FileNotFoundError(patient_id)
+    return _sanitized(bundle)
 
 
 def _pipeline_status(name: str) -> dict:
@@ -116,33 +139,35 @@ def _run_pipeline(name: str, cmd: list[str]) -> dict:
 
 @app.get("/api/info")
 def api_info():
-    count = len(list(BUNDLES_DIR.glob("*.json"))) if BUNDLES_DIR.exists() else 0
+    try:
+        count = patient_count()
+    except Exception:
+        count = 0
     return {**_DATASET_INFO, "bundleCount": count}
 
 
 @app.get("/api/patients")
 def list_patients():
-    if not BUNDLES_DIR.exists():
+    try:
+        return {"patients": list_subject_ids()}
+    except Exception:
         return {"patients": []}
-    return {"patients": sorted(p.stem for p in BUNDLES_DIR.glob("*.json"))}
 
 
 @app.get("/api/patients/{patient_id}")
 def get_patient(patient_id: str):
     try:
-        bundle = _read_bundle(patient_id)
+        bundle = _gold_bundle(patient_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
     result = parse_bundle(bundle)
 
-    hadm = _blinded_hadm(bundle)
     result["golddata"] = {
-        "blindedHadm": hadm,
+        "blindedHadm": _blinded_hadm(bundle),
         "pipelineTag": "golddata_fhir",
     }
     try:
-        std = _read_std_bundle(patient_id)
-        result["golddata"]["excludedConditions"] = _excluded_conditions(std)
+        result["golddata"]["excludedConditions"] = _excluded_conditions(_std_bundle(patient_id))
     except Exception:
         result["golddata"]["excludedConditions"] = []
 
@@ -151,11 +176,13 @@ def get_patient(patient_id: str):
 
 @app.get("/api/status")
 def api_status():
-    gd_count = len(list(BUNDLES_DIR.glob("*.json"))) if BUNDLES_DIR.exists() else 0
-    std_count = len(list(STD_BUNDLES_DIR.glob("*.json"))) if STD_BUNDLES_DIR.exists() else 0
+    try:
+        count = patient_count()
+    except Exception:
+        count = 0
     return {
-        "golddata_fhir": {"dir": str(BUNDLES_DIR), "bundleCount": gd_count},
-        "standard_fhir": {"dir": str(STD_BUNDLES_DIR), "bundleCount": std_count},
+        "golddata_fhir": {"source": "postgres", "patientCount": count},
+        "standard_fhir": {"source": "postgres", "patientCount": count},
         "pipelines": {
             "standard": _pipeline_status("standard"),
             "golddata": _pipeline_status("golddata"),

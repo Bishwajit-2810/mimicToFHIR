@@ -59,16 +59,24 @@ python main.py load
 python main.py reindex
 # Takes 10–30 minutes on the full dataset. Safe to skip on the demo dataset.
 
-# ── Step 4: Generate both bundle sets from the same 100 random patients ──────
+# ── Step 4: Start dashboards (two separate terminals) ─────────────────────
+# The dashboards read LIVE from the PostgreSQL container — no bundle files needed.
+uvicorn web.app:app          --host 0.0.0.0 --port 8095 --reload
+uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
+
+# ── Optional: also export bundle files to disk (not used by the dashboards) ──
 python main.py all
 # Output:
 #   fhir_bundles/              ← Full (all data, no blinding)
 #   golddata_fhir_bundles/     ← Latest encounter blinded (no Dx, no Meds, no Notes)
-
-# ── Step 5: Start dashboards (two separate terminals) ─────────────────────
-uvicorn web.app:app          --host 0.0.0.0 --port 8095 --reload
-uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
 ```
+
+> **Note:** The dashboards build each FHIR bundle on demand straight from the
+> `mimic_pg` database using SQL queries. `/api/patients` lists the first 10,000
+> patients in `hosp.patients` (override with `MIMIC_PATIENT_LIMIT`), and
+> `/api/patients/{id}` builds (and caches) that patient's bundle live.
+> `python main.py all` / `bundle` / `golddata` still work for exporting JSON
+> files, but they are no longer required to view data in the UI.
 
 | URL                     | Pipeline | Latest Conditions | Latest Meds | Notes |
 | ----------------------- | -------- | :---------------: | :---------: | :---: |
@@ -249,12 +257,16 @@ pip install psycopg2-binary
 
 ### Dashboard shows no data
 
+The dashboards query PostgreSQL directly, so check the database connection:
+
 ```bash
-ls fhir_bundles/           # for port 8095
-ls golddata_fhir_bundles/  # for port 8096
+docker compose ps                                   # container must be "healthy"
+docker exec -it mimic_pg psql -U mimic -d mimiciv \
+  -c "SELECT count(*) FROM hosp.patients;"          # should be > 0
 ```
 
-If empty, run `python main.py all`.
+If the count is 0, run `python main.py load`. Set `MIMIC_DSN` if your DB is not
+on the default `localhost:5433`.
 
 ### Slow bundle generation
 

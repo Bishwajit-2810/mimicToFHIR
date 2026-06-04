@@ -78,17 +78,16 @@ def _latest_hadm_id(cur, subject_id: int) -> int | None:
     return row["hadm_id"] if row else None
 
 
-def convert_patient(
+def build_patient_bundle(
     cur,
     subject_id: int,
-    output_dir: Path,
     include_notes: bool = False,
-) -> tuple[int, int | None]:
-    """Build a blinded bundle for one patient (no conditions, no medications).
+) -> tuple[dict | None, int | None]:
+    """Build a blinded bundle for one patient (no conditions, no medications), in memory.
 
     include_notes=True adds DocumentReference (discharge + radiology).
 
-    Returns (entry_count, latest_hadm_id).
+    Returns (bundle | None, latest_hadm_id).
     """
     entries: list[dict] = []
     _seen_ids: set[str] = set()
@@ -113,7 +112,7 @@ def convert_patient(
     cur.execute("SELECT * FROM hosp.patients WHERE subject_id = %s", (subject_id,))
     pat_row = cur.fetchone()
     if pat_row is None:
-        return 0, None
+        return None, None
 
     cur.execute(
         "SELECT * FROM hosp.admissions WHERE subject_id = %s ORDER BY admittime DESC LIMIT 1",
@@ -581,11 +580,23 @@ def convert_patient(
             detail = cur.fetchall()
             add(bb.build_document_reference(row, patient_uid, enc_uid, detail_rows=list(detail)))
 
-    # ── Write bundle ──────────────────────────────────────────────────────────
     bundle = bb.build_bundle(entries, latest_hadm_id=latest_hadm)
+    return bundle, latest_hadm
+
+
+def convert_patient(
+    cur,
+    subject_id: int,
+    output_dir: Path,
+    include_notes: bool = False,
+) -> tuple[int, int | None]:
+    """Build a patient's blinded bundle and write it to ``output_dir/<subject_id>.json``."""
+    bundle, latest_hadm = build_patient_bundle(cur, subject_id, include_notes=include_notes)
+    if bundle is None:
+        return 0, latest_hadm
     out_path = output_dir / f"{subject_id}.json"
     out_path.write_text(json.dumps(bb._sanitize_for_json(bundle), default=str, indent=2), encoding="utf-8")
-    return len(entries), latest_hadm
+    return len(bundle["entry"]), latest_hadm
 
 
 # ── Full pipeline ──────────────────────────────────────────────────────────────

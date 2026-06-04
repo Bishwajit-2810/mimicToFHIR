@@ -5,11 +5,12 @@ from pathlib import Path
 from functools import lru_cache
 import json
 
+from etl.mimic_to_bundle import build_patient_bundle, _sanitize_for_json
+from .db import connect, dict_cursor, list_subject_ids, patient_count
 from .parser import parse_bundle
 
 app = FastAPI(title="MIMIC-IV Clinical Dashboard")
 
-BUNDLES_DIR = Path("fhir_bundles")
 STATIC_DIR = Path("static")
 
 _DATASET_INFO = {
@@ -30,36 +31,57 @@ _DATASET_INFO = {
 }
 
 
-@lru_cache(maxsize=15)
-def _read_bundle(patient_id: str) -> dict:
-    path = BUNDLES_DIR / f"{patient_id}.json"
-    if not path.exists():
+@lru_cache(maxsize=64)
+def _patient_data(patient_id: str) -> dict:
+    """Build a patient's full FHIR bundle live from PostgreSQL and parse it.
+
+    The in-memory bundle is round-tripped through ``_sanitize_for_json`` +
+    ``json`` so it is byte-for-byte what the file pipeline would have written,
+    guaranteeing the UI sees identical data.
+    """
+    try:
+        sid = int(patient_id)
+    except ValueError:
         raise FileNotFoundError(patient_id)
-    with open(path) as f:
-        return json.load(f)
+
+    conn = connect()
+    try:
+        cur = dict_cursor(conn)
+        bundle = build_patient_bundle(cur, sid)
+        cur.close()
+    finally:
+        conn.close()
+
+    if bundle is None:
+        raise FileNotFoundError(patient_id)
+
+    bundle = json.loads(json.dumps(_sanitize_for_json(bundle), default=str))
+    return parse_bundle(bundle)
 
 
 @app.get("/api/info")
 def api_info():
-    count = len(list(BUNDLES_DIR.glob("*.json"))) if BUNDLES_DIR.exists() else 0
+    try:
+        count = patient_count()
+    except Exception:
+        count = 0
     return {**_DATASET_INFO, "bundleCount": count}
 
 
 @app.get("/api/patients")
 def list_patients():
-    if not BUNDLES_DIR.exists():
+    try:
+        return {"patients": list_subject_ids()}
+    except Exception:
         return {"patients": []}
-    ids = sorted(p.stem for p in BUNDLES_DIR.glob("*.json"))
-    return {"patients": ids}
 
 
 @app.get("/api/patients/{patient_id}")
 def get_patient(patient_id: str):
     try:
-        bundle = _read_bundle(patient_id)
+        return _patient_data(patient_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
-    return parse_bundle(bundle)
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

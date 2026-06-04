@@ -1722,7 +1722,11 @@ def build_bundle(entries: list[dict]) -> dict:
 # ── per-patient pipeline ──────────────────────────────────────────────────────
 
 
-def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
+def build_patient_bundle(cur, subject_id: int) -> dict | None:
+    """Build a full FHIR transaction bundle for one patient, in memory.
+
+    Returns the bundle dict, or None if the patient does not exist.
+    """
     entries: list[dict] = []
     _seen_ids: set[str] = set()
 
@@ -1743,7 +1747,7 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
     cur.execute("SELECT * FROM hosp.patients WHERE subject_id = %s", (subject_id,))
     pat_row = cur.fetchone()
     if pat_row is None:
-        return 0
+        return None
 
     cur.execute(
         "SELECT * FROM hosp.admissions WHERE subject_id = %s ORDER BY admittime DESC LIMIT 1",
@@ -2111,10 +2115,17 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         cur2.close()
         add(build_document_reference(row, patient_uid, enc_uid, detail_rows=list(detail)))
 
-    bundle = build_bundle(entries)
+    return build_bundle(entries)
+
+
+def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
+    """Build a patient's bundle and write it to ``output_dir/<subject_id>.json``."""
+    bundle = build_patient_bundle(cur, subject_id)
+    if bundle is None:
+        return 0
     out_path = output_dir / f"{subject_id}.json"
     out_path.write_text(json.dumps(_sanitize_for_json(bundle), default=str, indent=2), encoding="utf-8")
-    return len(entries)
+    return len(bundle["entry"])
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
