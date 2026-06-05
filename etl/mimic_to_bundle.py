@@ -2143,7 +2143,7 @@ def convert(
     if subject_ids is not None:
         sids = subject_ids
     else:
-        effective_limit = limit if limit is not None else (100 if random_sample else None)
+        effective_limit = limit if limit is not None else (10000 if random_sample else None)
         if random_sample:
             query = "SELECT subject_id FROM hosp.patients ORDER BY RANDOM()"
         else:
