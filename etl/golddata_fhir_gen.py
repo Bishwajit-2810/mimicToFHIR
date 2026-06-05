@@ -130,7 +130,6 @@ def convert_patient(
         UNION
         SELECT DISTINCT order_provider_id FROM hosp.poe
         WHERE subject_id = %s AND order_provider_id IS NOT NULL
-        LIMIT 20
         """,
         (subject_id, subject_id),
     )
@@ -346,7 +345,7 @@ def convert_patient(
             if enc_uid:
                 add(bb.build_procedure(row, patient_uid, enc_uid))
 
-    # ── Lab observations — capped per patient ─────────────────────────────────
+    # ── Lab observations — all rows per patient ─────────────────────────────────
     cur.execute(
         """
         SELECT l.*, d.label
@@ -354,7 +353,6 @@ def convert_patient(
         LEFT JOIN hosp.d_labitems d ON l.itemid = d.itemid
         WHERE l.subject_id = %s
         ORDER BY l.charttime DESC NULLS LAST
-        LIMIT 500
         """,
         (subject_id,),
     )
@@ -366,7 +364,7 @@ def convert_patient(
             seen_labs.add(obs["id"])
             add(obs)
 
-    # ── ICU chart observations (vitals) — capped per patient ─────────────────
+    # ── ICU chart observations (vitals) — all rows per patient ─────────────────
     if _CHART_ITEM_IDS:
         placeholders = ",".join("%s" for _ in _CHART_ITEM_IDS)
         cur.execute(
@@ -376,7 +374,6 @@ def convert_patient(
             LEFT JOIN icu.d_items d ON c.itemid = d.itemid
             WHERE c.subject_id = %s AND c.itemid IN ({placeholders})
             ORDER BY c.charttime DESC
-            LIMIT 2000
             """,
             (subject_id, *_CHART_ITEM_IDS),
         )
@@ -389,7 +386,7 @@ def convert_patient(
                     seen_charts.add(obs["id"])
                     add(obs)
 
-    # ── ICU procedure events — capped per patient ────────────────────────────
+    # ── ICU procedure events — all rows per patient ────────────────────────────
     cur.execute(
         """
         SELECT pe.*, d.label
@@ -397,7 +394,6 @@ def convert_patient(
         LEFT JOIN icu.d_items d ON pe.itemid = d.itemid
         WHERE pe.subject_id = %s
         ORDER BY pe.starttime DESC
-        LIMIT 500
         """,
         (subject_id,),
     )
@@ -423,7 +419,7 @@ def convert_patient(
     for row in cur.fetchall():
         add(bb.build_icu_caregiver(row))
 
-    # ── ICU datetime observations — capped per patient ───────────────────────
+    # ── ICU datetime observations — all rows per patient ───────────────────────
     cur.execute(
         """
         SELECT de.*, d.label
@@ -431,7 +427,6 @@ def convert_patient(
         LEFT JOIN icu.d_items d ON de.itemid = d.itemid
         WHERE de.subject_id = %s
         ORDER BY de.charttime DESC
-        LIMIT 500
         """,
         (subject_id,),
     )
@@ -440,7 +435,7 @@ def convert_patient(
         if enc_uid:
             add(bb.build_datetime_observation(row, patient_uid, enc_uid))
 
-    # ── ICU output observations — capped per patient ─────────────────────────
+    # ── ICU output observations — all rows per patient ─────────────────────────
     cur.execute(
         """
         SELECT oe.*, d.label
@@ -448,7 +443,6 @@ def convert_patient(
         LEFT JOIN icu.d_items d ON oe.itemid = d.itemid
         WHERE oe.subject_id = %s
         ORDER BY oe.charttime DESC
-        LIMIT 500
         """,
         (subject_id,),
     )
@@ -457,7 +451,7 @@ def convert_patient(
         if enc_uid:
             add(bb.build_output_observation(row, patient_uid, enc_uid))
 
-    # ── ICU input events (blinded for latest hosp encounter) — capped per patient ─
+    # ── ICU input events (blinded for latest hosp encounter) — all rows per patient ─
     if latest_hadm is not None:
         cur.execute(
             """
@@ -466,7 +460,6 @@ def convert_patient(
             LEFT JOIN icu.d_items d ON ie.itemid = d.itemid
             WHERE ie.subject_id = %s AND ie.hadm_id != %s
             ORDER BY ie.starttime DESC
-            LIMIT 2000
             """,
             (subject_id, latest_hadm),
         )
@@ -475,7 +468,7 @@ def convert_patient(
             if enc_uid:
                 add(bb.build_input_event(row, patient_uid, enc_uid))
 
-    # ── ICU ingredient events (blinded for latest hosp encounter) — capped per patient ─
+    # ── ICU ingredient events (blinded for latest hosp encounter) — all rows per patient ─
     if latest_hadm is not None:
         cur.execute(
             """
@@ -484,7 +477,6 @@ def convert_patient(
             LEFT JOIN icu.d_items d ON ige.itemid = d.itemid
             WHERE ige.subject_id = %s AND ige.hadm_id != %s
             ORDER BY ige.starttime DESC
-            LIMIT 2000
             """,
             (subject_id, latest_hadm),
         )
@@ -524,7 +516,6 @@ def convert_patient(
             SELECT * FROM note.discharge
             WHERE subject_id = %s AND hadm_id != %s
             ORDER BY charttime DESC NULLS LAST
-            LIMIT 20
             """,
             (subject_id, latest_hadm),
         )
@@ -542,7 +533,6 @@ def convert_patient(
             SELECT * FROM note.radiology
             WHERE subject_id = %s AND hadm_id != %s
             ORDER BY charttime DESC NULLS LAST
-            LIMIT 20
             """,
             (subject_id, latest_hadm),
         )
@@ -562,7 +552,6 @@ def convert_patient(
             SELECT * FROM note.discharge
             WHERE subject_id = %s AND hadm_id = %s
             ORDER BY charttime DESC NULLS LAST
-            LIMIT 20
             """,
             (subject_id, latest_hadm),
         )
@@ -580,7 +569,6 @@ def convert_patient(
             SELECT * FROM note.radiology
             WHERE subject_id = %s AND hadm_id = %s
             ORDER BY charttime DESC NULLS LAST
-            LIMIT 20
             """,
             (subject_id, latest_hadm),
         )

@@ -1761,7 +1761,6 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         UNION
         SELECT DISTINCT order_provider_id FROM hosp.poe
         WHERE subject_id = %s AND order_provider_id IS NOT NULL
-        LIMIT 20
         """,
         (subject_id, subject_id),
     )
@@ -1889,7 +1888,7 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         if enc_uid:
             add(build_procedure(row, patient_uid, enc_uid))
 
-    # Lab observations — capped per patient to limit bundle size on full dataset
+    # Lab observations — all rows per patient
     cur.execute(
         """
         SELECT l.*, d.label
@@ -1897,7 +1896,6 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         LEFT JOIN hosp.d_labitems d ON l.itemid = d.itemid
         WHERE l.subject_id = %s
         ORDER BY l.charttime DESC NULLS LAST
-        LIMIT 500
         """,
         (subject_id,),
     )
@@ -1905,7 +1903,7 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
         add(build_lab_observation(row, patient_uid, enc_uid))
 
-    # Chart observations (vitals only) — capped per patient to limit bundle size
+    # Chart observations (vitals only) — all rows per patient
     chart_item_ids = list(_CHART_LOINC.keys())
     cur.execute(
         f"""
@@ -1914,7 +1912,6 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         LEFT JOIN icu.d_items d ON c.itemid = d.itemid
         WHERE c.subject_id = %s AND c.itemid IN ({','.join('%s' for _ in chart_item_ids)})
         ORDER BY c.charttime DESC
-        LIMIT 2000
         """,
         (subject_id, *chart_item_ids),
     )
@@ -1940,7 +1937,7 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
     for row in cur.fetchall():
         add(build_icu_caregiver(row))
 
-    # ICU datetime observations — capped per patient
+    # ICU datetime observations — all rows per patient
     cur.execute(
         """
         SELECT de.*, d.label
@@ -1948,7 +1945,6 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         LEFT JOIN icu.d_items d ON de.itemid = d.itemid
         WHERE de.subject_id = %s
         ORDER BY de.charttime DESC
-        LIMIT 500
         """,
         (subject_id,),
     )
@@ -1957,7 +1953,7 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         if enc_uid:
             add(build_datetime_observation(row, patient_uid, enc_uid))
 
-    # ICU output observations — capped per patient
+    # ICU output observations — all rows per patient
     cur.execute(
         """
         SELECT oe.*, d.label
@@ -1965,7 +1961,6 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         LEFT JOIN icu.d_items d ON oe.itemid = d.itemid
         WHERE oe.subject_id = %s
         ORDER BY oe.charttime DESC
-        LIMIT 500
         """,
         (subject_id,),
     )
@@ -1974,7 +1969,7 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         if enc_uid:
             add(build_output_observation(row, patient_uid, enc_uid))
 
-    # ICU input events — capped per patient
+    # ICU input events — all rows per patient
     cur.execute(
         """
         SELECT ie.*, d.label
@@ -1982,7 +1977,6 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         LEFT JOIN icu.d_items d ON ie.itemid = d.itemid
         WHERE ie.subject_id = %s
         ORDER BY ie.starttime DESC
-        LIMIT 2000
         """,
         (subject_id,),
     )
@@ -1991,7 +1985,7 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         if enc_uid:
             add(build_input_event(row, patient_uid, enc_uid))
 
-    # ICU ingredient events — capped per patient
+    # ICU ingredient events — all rows per patient
     cur.execute(
         """
         SELECT ige.*, d.label
@@ -1999,7 +1993,6 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         LEFT JOIN icu.d_items d ON ige.itemid = d.itemid
         WHERE ige.subject_id = %s
         ORDER BY ige.starttime DESC
-        LIMIT 2000
         """,
         (subject_id,),
     )
@@ -2092,9 +2085,9 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         if enc_uid:
             add(build_ed_pyxis(row, patient_uid, enc_uid))
 
-    # Discharge summaries (MIMIC-IV-Note) — most recent 20 per patient
+    # Discharge summaries (MIMIC-IV-Note) — all per patient
     cur.execute(
-        "SELECT * FROM note.discharge WHERE subject_id = %s ORDER BY charttime DESC NULLS LAST LIMIT 20",
+        "SELECT * FROM note.discharge WHERE subject_id = %s ORDER BY charttime DESC NULLS LAST",
         (subject_id,),
     )
     for row in cur.fetchall():
@@ -2105,9 +2098,9 @@ def convert_patient(cur, subject_id: int, output_dir: Path) -> int:
         cur2.close()
         add(build_document_reference(row, patient_uid, enc_uid, detail_rows=list(detail)))
 
-    # Radiology notes (MIMIC-IV-Note) — most recent 20 per patient
+    # Radiology notes (MIMIC-IV-Note) — all per patient
     cur.execute(
-        "SELECT * FROM note.radiology WHERE subject_id = %s ORDER BY charttime DESC NULLS LAST LIMIT 20",
+        "SELECT * FROM note.radiology WHERE subject_id = %s ORDER BY charttime DESC NULLS LAST",
         (subject_id,),
     )
     for row in cur.fetchall():
