@@ -1293,21 +1293,90 @@ function _renderEncCharts(idx) {
 }
 
 // ── Chart download helpers ────────────────────────────────────────────────────
-function _downloadCanvas(canvas, filename) {
-  // Render chart onto a dark background so exported PNG isn't transparent
+// Render a chart canvas onto a dark background with an optional title bar, so
+// the exported PNG isn't transparent and carries its human-readable label.
+function _renderLabeledCanvas(canvas, label) {
+  const dpr     = window.devicePixelRatio || 1;
+  const pad     = Math.round(20 * dpr);
+  const headerH = label ? Math.round(52 * dpr) : 0;
   const off = document.createElement('canvas');
-  off.width  = canvas.width;
-  off.height = canvas.height;
+  off.width  = canvas.width  + pad * 2;
+  off.height = canvas.height + headerH + pad;
   const ctx  = off.getContext('2d');
   ctx.fillStyle = '#161b22';
   ctx.fillRect(0, 0, off.width, off.height);
-  ctx.drawImage(canvas, 0, 0);
+  if (label) {
+    ctx.fillStyle = '#1e4976';
+    ctx.fillRect(0, 0, off.width, headerH);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `600 ${Math.round(22 * dpr)}px -apple-system, "Segoe UI", Roboto, sans-serif`;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, pad, headerH / 2);
+  }
+  ctx.drawImage(canvas, pad, headerH);
+  return off;
+}
+
+function _downloadCanvas(canvas, filename, label) {
+  const off = _renderLabeledCanvas(canvas, label);
   const a = document.createElement('a');
   a.href     = off.toDataURL('image/png');
   a.download = (filename || 'chart').replace(/\W+/g, '_') + '.png';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+}
+
+// Read the human-readable label from a chart card's header.
+function _cardLabel(card) {
+  const span = card.querySelector('.card-header span');
+  return span ? span.textContent.trim() : '';
+}
+
+// Bundle every population chart into a single ZIP of labelled PNGs.
+async function downloadAllPopCharts() {
+  const btn   = $("popDownloadAllBtn");
+  const lbl   = $("popDownloadAllLabel");
+  if (typeof JSZip === 'undefined') {
+    alert('Could not load the ZIP library. Please check your connection and retry.');
+    return;
+  }
+  const cards = Array.from(document.querySelectorAll('#populationPanel section.card'))
+    .map(card => ({ canvas: card.querySelector('canvas'), label: _cardLabel(card) }))
+    .filter(c => c.canvas && c.label);
+  if (!cards.length) return;
+
+  if (btn) btn.disabled = true;
+  const origText = lbl ? lbl.textContent : '';
+
+  try {
+    const zip  = new JSZip();
+    const seen = {};
+    for (let i = 0; i < cards.length; i++) {
+      const { canvas, label } = cards[i];
+      if (lbl) lbl.textContent = `Preparing ${i + 1}/${cards.length}…`;
+      let name = label.replace(/[^\w \-]+/g, '').trim().replace(/\s+/g, '_') || `chart_${i + 1}`;
+      if (seen[name]) name += `_${seen[name]++}`; else seen[name] = 1;
+      const off  = _renderLabeledCanvas(canvas, label);
+      const blob = await new Promise(res => off.toBlob(res, 'image/png'));
+      zip.file(`${String(i + 1).padStart(2, '0')}_${name}.png`, blob);
+    }
+    if (lbl) lbl.textContent = 'Zipping…';
+    const content = await zip.generateAsync({ type: 'blob' });
+    const a = document.createElement('a');
+    a.href     = URL.createObjectURL(content);
+    a.download = 'population_charts.zip';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  } catch (e) {
+    console.error('Chart export failed', e);
+    alert('Failed to export charts. See console for details.');
+  } finally {
+    if (lbl) lbl.textContent = origText;
+    if (btn) btn.disabled = false;
+  }
 }
 
 function _injectDownloadBtns() {
@@ -1321,7 +1390,8 @@ function _injectDownloadBtns() {
     btn.className = 'chart-dl-btn';
     btn.title     = 'Download chart as PNG';
     btn.innerHTML = '<i class="fas fa-download"></i>';
-    btn.onclick   = e => { e.stopPropagation(); _downloadCanvas(canvas, canvas.id); };
+    const label = _cardLabel(card);
+    btn.onclick   = e => { e.stopPropagation(); _downloadCanvas(canvas, label || canvas.id, label); };
     header.appendChild(btn);
   });
 

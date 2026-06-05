@@ -1419,6 +1419,25 @@ body {
   min-width: 70px;
 }
 .pop-stat-chip:last-child { border-right: none; }
+.pop-download-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-left: auto;
+  align-self: center;
+  padding: 0.45rem 0.95rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #cdd9e5;
+  background: linear-gradient(135deg, #1a3a6e 0%, #1e4976 100%);
+  border: 1px solid #2d5a8c;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: filter 0.15s ease, opacity 0.15s ease;
+}
+.pop-download-all:hover { filter: brightness(1.18); }
+.pop-download-all:disabled { opacity: 0.6; cursor: progress; }
 .pop-stat-num {
   font-size: 1.35rem;
   font-weight: 700;

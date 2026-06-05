@@ -14,6 +14,7 @@
     <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/style.css" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   </head>
   <body>
     <!-- ═══════════════════════════ HEADER ══════════════════════════════════ -->
@@ -984,6 +985,10 @@
             <div class="pop-stat-chip"><span id="pStatProcs" class="pop-stat-num">—</span><span class="pop-stat-label">Procedures</span></div>
             <div class="pop-stat-chip"><span id="pStatNotes" class="pop-stat-num">—</span><span class="pop-stat-label">Notes</span></div>
             <div class="pop-stat-chip"><span id="pStatVits"  class="pop-stat-num">—</span><span class="pop-stat-label">Vitals</span></div>
+            <button id="popDownloadAllBtn" class="pop-download-all" onclick="downloadAllPopCharts()" title="Download every chart as a labelled PNG (ZIP)">
+              <i class="fas fa-download"></i>
+              <span id="popDownloadAllLabel">Download All Charts</span>
+            </button>
           </div>
         </div>
       </div>
@@ -1542,6 +1547,6 @@
     </div>
     <!-- /populationPanel -->
 
-    <script src="/static/app.js?v=8"></script>
+    <script src="/static/app.js?v=9"></script>
   </body>
 </html>
