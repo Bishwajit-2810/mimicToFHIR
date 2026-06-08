@@ -90,7 +90,7 @@ def cmd_all(args):
         sids = [int(s.strip()) for s in args.subject_ids.split(",")]
         print(f"Using {len(sids)} specified patients: {sids}\n")
     else:
-        limit = args.limit if args.limit is not None else 100
+        limit = args.limit if args.limit is not None else 10000
         print(f"Selecting {limit} random patients from database...")
         conn = psycopg2.connect(dsn)
         conn.set_session(readonly=True, autocommit=True)
@@ -124,7 +124,7 @@ def cmd_all(args):
 def _add_batch_args(p):
     p.add_argument("--dsn", default=None, help="Override PostgreSQL DSN")
     p.add_argument("--output", default=None, help="Output directory")
-    p.add_argument("--limit", type=int, default=None, help="Max patients to process (default: 100 when --random)")
+    p.add_argument("--limit", type=int, default=None, help="Max patients to process (default: 10000 when --random)")
     p.add_argument("--offset", type=int, default=0, help="Skip first N patients (only used with --no-random)")
     p.add_argument("--subject-ids", default=None, help="Comma-separated subject_ids")
     p.add_argument("--random", action=argparse.BooleanOptionalAction, default=True,
@@ -189,7 +189,7 @@ Pipelines:
     )
     p_all.add_argument("--dsn", default=None, help="Override PostgreSQL DSN")
     p_all.add_argument("--output", default=None, help="Base output directory (creates fhir_bundles/, golddata_fhir_bundles/ inside)")
-    p_all.add_argument("--limit", type=int, default=100, help="Number of random patients (default: 100)")
+    p_all.add_argument("--limit", type=int, default=10000, help="Number of random patients (default: 10000)")
     p_all.add_argument("--subject-ids", default=None, help="Comma-separated subject_ids; skips random selection")
 
     args = parser.parse_args()
