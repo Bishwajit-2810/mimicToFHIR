@@ -1548,8 +1548,11 @@ function _mkBar(id, labels, datasets, opts = {}) {
           stacked: !!opts.stacked,
           ticks: {
             color: _TC, font: { size: 10 },
-            maxRotation: opts.rotateX || 0,
-            autoSkip: true, maxTicksLimit: 20,
+            // Vertical bars put categories on the x-axis — show every label (rotate
+            // as needed). Horizontal bars put values here, so thinning is fine.
+            maxRotation: isHBar ? (opts.rotateX || 0) : (opts.rotateX ?? 45),
+            autoSkip: isHBar,
+            ...(isHBar ? { maxTicksLimit: 20 } : {}),
           },
           grid:  { color: _GC },
           title: _at(xLabel),
@@ -1557,7 +1560,13 @@ function _mkBar(id, labels, datasets, opts = {}) {
         y: {
           stacked:     !!opts.stacked,
           beginAtZero: true,
-          ticks: { color: _TC, font: { size: 10 }, autoSkip: true, maxTicksLimit: 15 },
+          // Horizontal bars put categories on the y-axis — never drop a category
+          // label. Vertical bars put values here, so thinning is fine.
+          ticks: {
+            color: _TC, font: { size: 10 },
+            autoSkip: !isHBar,
+            ...(isHBar ? {} : { maxTicksLimit: 15 }),
+          },
           grid:  { color: _GC },
           title: _at(yLabel),
           ...opts.yAxis,
