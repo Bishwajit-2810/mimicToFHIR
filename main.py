@@ -3,7 +3,7 @@
 
 Two output pipelines:
   bundle   → fhir_bundles/          Full data: conditions, procedures, meds, notes, vitals, labs
-  golddata → golddata_fhir_bundles/ Blind:  latest encounter has no conditions, procedures, meds, notes
+  fhir_blind → fhir_blind_bundles/ Blind:  latest encounter has no conditions, procedures, meds, notes
 
 Use `all` to generate both from the same random patient sample.
 """
@@ -104,9 +104,9 @@ def cmd_bundle(args):
     )
 
 
-def cmd_golddata(args):
-    from etl.golddata_fhir_gen import convert, DSN, OUTPUT_DIR
-    from etl.filters import default_output_base, GOLD_SUBDIR
+def cmd_fhir_blind(args):
+    from etl.fhir_blind_gen import convert, DSN, OUTPUT_DIR
+    from etl.filters import default_output_base, FHIR_BLIND_SUBDIR
 
     dsn = args.dsn or DSN
     filtered_sids, filters = _resolve_filtered_sids(args, dsn)
@@ -119,7 +119,7 @@ def cmd_golddata(args):
     if args.output:
         output_dir = Path(args.output)
     elif filters:
-        output_dir = default_output_base(filters) / GOLD_SUBDIR
+        output_dir = default_output_base(filters) / FHIR_BLIND_SUBDIR
     else:
         output_dir = OUTPUT_DIR
 
@@ -140,7 +140,7 @@ def cmd_all(args):
     import psycopg2
     import psycopg2.extras
     from etl.mimic_to_bundle import convert as bundle_convert, DSN, OUTPUT_DIR as BUNDLE_OUT
-    from etl.golddata_fhir_gen import convert as gold_convert, OUTPUT_DIR as GOLD_OUT
+    from etl.fhir_blind_gen import convert as fhir_blind_convert, OUTPUT_DIR as FHIR_BLIND_OUT
     from etl.filters import extract_filters, select_subject_ids, slug_for, default_output_base
 
     dsn = args.dsn or DSN
@@ -169,9 +169,9 @@ def cmd_all(args):
         print("No patients matched the given filters. Nothing to extract.")
         return
 
-    # Filtered extracts go to filtered/<slug>/{fhir,golddata}/; otherwise
+    # Filtered extracts go to filtered/<slug>/{fhir,fhir_blind}/; otherwise
     # top-level dirs (legacy). An explicit --output keeps the legacy subfolder names.
-    from etl.filters import FHIR_SUBDIR, GOLD_SUBDIR
+    from etl.filters import FHIR_SUBDIR, FHIR_BLIND_SUBDIR
     if args.output:
         base = Path(args.output)
     elif filters:
@@ -180,14 +180,14 @@ def cmd_all(args):
         base = None
 
     if filters:
-        fhir_name, gold_name = FHIR_SUBDIR, GOLD_SUBDIR
+        fhir_name, fhir_blind_name = FHIR_SUBDIR, FHIR_BLIND_SUBDIR
     else:
-        fhir_name, gold_name = "golddata_fhir_bundles", "fhir_bundles"
+        fhir_name, fhir_blind_name = "fhir_bundles", "fhir_blind_bundles"
 
     bundle_out = base / fhir_name if base else BUNDLE_OUT
-    gold_out = base / gold_name if base else GOLD_OUT
+    fhir_blind_out = base / fhir_blind_name if base else FHIR_BLIND_OUT
 
-    print("=== Step 1/2: Full FHIR bundles ===")
+    print("=== Step 1/2: FHIR bundles ===")
     bundle_convert(
         dsn=dsn,
         output_dir=bundle_out,
@@ -195,16 +195,16 @@ def cmd_all(args):
         random_sample=False,
     )
 
-    print("\n=== Step 2/2: GoldData FHIR bundles ===")
-    gold_convert(
+    print("\n=== Step 2/2: FHIR (Blinded) bundles ===")
+    fhir_blind_convert(
         dsn=dsn,
-        output_dir=gold_out,
+        output_dir=fhir_blind_out,
         include_notes=False,
         subject_ids=sids,
         random_sample=False,
     )
 
-    dest = base.resolve() if base else "fhir_bundles/ and golddata_fhir_bundles/"
+    dest = base.resolve() if base else "fhir_bundles/ and fhir_blind_bundles/"
     print(f"\nBoth pipelines complete. Same {len(sids):,} patients across all outputs → {dest}")
 
 
@@ -227,7 +227,7 @@ def main():
         epilog="""
 Pipelines:
   bundle    fhir_bundles/           Full data: conditions, procedures, meds, notes, vitals, labs
-  golddata  golddata_fhir_bundles/  Blind: latest encounter has no conditions, procedures, meds, notes
+  fhir_blind  fhir_blind_bundles/  Blind: latest encounter has no conditions, procedures, meds, notes
 """,
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -264,12 +264,12 @@ Pipelines:
     )
     _add_batch_args(p_bundle)
 
-    # ── golddata (blind, no notes) ────────────────────────────────────────────
-    p_gold = sub.add_parser(
-        "golddata",
-        help="Blind pipeline → golddata_fhir_bundles/ (no conditions, no meds, no notes)",
+    # ── fhir_blind (blind, no notes) ────────────────────────────────────────────
+    p_fhir_blind = sub.add_parser(
+        "fhir_blind",
+        help="Blind pipeline → fhir_blind_bundles/ (no conditions, no meds, no notes)",
     )
-    _add_batch_args(p_gold)
+    _add_batch_args(p_fhir_blind)
 
     # ── all (same patients across both) ──────────────────────────────────────
     p_all = sub.add_parser(
@@ -277,7 +277,7 @@ Pipelines:
         help="Run both pipelines on the same random patients (recommended)",
     )
     p_all.add_argument("--dsn", default=None, help="Override PostgreSQL DSN")
-    p_all.add_argument("--output", default=None, help="Base output directory (creates fhir_bundles/, golddata_fhir_bundles/ inside)")
+    p_all.add_argument("--output", default=None, help="Base output directory (creates fhir_bundles/, fhir_blind_bundles/ inside)")
     p_all.add_argument("--limit", type=int, default=10000, help="Number of random patients (default: 10000)")
     p_all.add_argument("--subject-ids", default=None, help="Comma-separated subject_ids; skips random selection")
     from etl.filters import add_filter_args as _add_filter_args_all
@@ -290,7 +290,7 @@ Pipelines:
         "reindex":  cmd_reindex,
         "convert":  cmd_convert,
         "bundle":   cmd_bundle,
-        "golddata": cmd_golddata,
+        "fhir_blind": cmd_fhir_blind,
         "all":      cmd_all,
     }
     dispatch[args.command](args)

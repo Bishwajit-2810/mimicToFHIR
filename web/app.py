@@ -9,12 +9,12 @@ from .parser import parse_bundle
 
 app = FastAPI(title="MIMIC-IV Clinical Dashboard")
 
-BUNDLES_DIR = Path("golddata_fhir_bundles")
+BUNDLES_DIR = Path("fhir_bundles")
 STATIC_DIR = Path("static")
 
 _DATASET_INFO = {
     "mode": "full",
-    "label": "Gold Data",
+    "label": "FHIR",
     "description": "Complete clinical record — diagnoses, medications, notes, vitals, labs",
     "includes": {
         "conditions": True,

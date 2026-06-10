@@ -1,4 +1,4 @@
-"""Shared FHIR bundle parsing logic used by both web/app.py and web/golddata_app.py."""
+"""Shared FHIR bundle parsing logic used by both web/app.py and web/fhir_blind_app.py."""
 
 import base64
 import re

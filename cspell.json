@@ -2,7 +2,6 @@
   "version": "0.2",
   "language": "en",
   "words": [
-    "golddata",
     "fhir",
     "mimic",
     "mimiciv",
@@ -69,7 +68,7 @@
     ".venv/**",
     "__pycache__/**",
     "fhir_bundles/**",
-    "golddata_fhir_bundles/**",
+    "fhir_blind_bundles/**",
     "fhir_output/**",
     "encounter_reports/**",
     "hosp/**",

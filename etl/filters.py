@@ -1,8 +1,8 @@
-"""Cohort filtering for the bundle / golddata / all pipelines.
+"""Cohort filtering for the bundle / fhir_blind / all pipelines.
 
 Exposes one CLI flag per dimension shown on the dashboard "axes" (demographics +
 encounter details), letting the user carve out a subset of patients and route
-their FHIR + GoldData bundles into a dedicated, self-describing folder under
+their FHIR and FHIR (Blinded) bundles into a dedicated, self-describing folder under
 ``filtered/``.
 
 Dimensions (and the MIMIC column each maps to):
@@ -43,8 +43,8 @@ from etl.mimic_to_bundle import _SERVICE_DISPLAY
 FILTERED_ROOT = Path("filtered")
 
 # Subfolder names inside filtered/<slug>/ — one for each pipeline.
-FHIR_SUBDIR = "golddata"
-GOLD_SUBDIR = "fhir"
+FHIR_SUBDIR = "fhir"
+FHIR_BLIND_SUBDIR = "fhir_blind"
 
 _NAME_TO_CODE = {display.lower(): code for code, display in _SERVICE_DISPLAY.items()}
 

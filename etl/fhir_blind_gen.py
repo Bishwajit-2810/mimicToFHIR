@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-golddata_fhir_gen.py — GoldData FHIR Bundle Generator
+fhir_blind_gen.py — FHIR (Blinded) Bundle Generator
 
-Produces one FHIR R4 transaction bundle per patient into golddata_fhir_bundles/.
+Produces one FHIR R4 transaction bundle per patient into fhir_blind_bundles/.
 
 Sources: hosp, icu, ed, and note modules (full MIMIC-IV dataset).
 
@@ -36,12 +36,12 @@ INCLUDED FOR LATEST ENCOUNTER IN TESTING VARIANT ONLY (include_notes=True):
     • DocumentReference  — latest encounter discharge + radiology notes
 
 Usage:
-    python -m etl.golddata_fhir_gen [--dsn DSN] [--output DIR]
-    python main.py golddata [options]
+    python -m etl.fhir_blind_gen [--dsn DSN] [--output DIR]
+    python main.py fhir_blind [options]
 
 Env:
     MIMIC_DSN    — PostgreSQL DSN (default: localhost:5433)
-    GOLDDATA_OUT  — output directory (default: golddata_fhir_bundles)
+    FHIR_BLIND_OUT  — output directory (default: fhir_blind_bundles)
 """
 
 import argparse
@@ -55,13 +55,13 @@ from pathlib import Path
 import psycopg2
 import psycopg2.extras
 
-from etl import golddata_builder as bb
+from etl import fhir_blind_builder as bb
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 _DEFAULT_DSN = "host=localhost port=5433 dbname=mimiciv user=mimic password=mimic"
 DSN = os.getenv("MIMIC_DSN") or _DEFAULT_DSN
-OUTPUT_DIR = Path(os.getenv("GOLDDATA_OUT", "fhir_bundles"))
+OUTPUT_DIR = Path(os.getenv("FHIR_BLIND_OUT", "fhir_blind_bundles"))
 
 _CHART_ITEM_IDS = list(bb.CHART_LOINC.keys())
 
@@ -614,7 +614,7 @@ def convert(
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    variant = "Testing (blind + notes)" if include_notes else "GoldData (blind)"
+    variant = "Testing (blind + notes)" if include_notes else "FHIR (Blinded)"
     print(f"{variant} FHIR Generator")
     print(f"  DSN    : {dsn}")
     print(f"  Output : {output_dir.resolve()}/")
@@ -672,7 +672,7 @@ def convert(
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Generate GoldData FHIR bundles (no conditions, no medications)."
+        description="Generate FHIR (Blinded) bundles (no conditions, no medications)."
     )
     p.add_argument("--dsn", default=DSN, help="PostgreSQL DSN")
     p.add_argument("--output", default=str(OUTPUT_DIR), help="Output directory")

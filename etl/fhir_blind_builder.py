@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Standalone FHIR R4 resource builders for the golddata pipeline.
+Standalone FHIR R4 resource builders for the FHIR (Blinded) pipeline.
 
 Completely independent from mimic_to_bundle.py:
   - Different UUID namespace prevents ID collisions with standard fhir bundles.
-  - Every resource gets a meta.tag marking it as "golddata_fhir".
+  - Every resource gets a meta.tag marking it as "fhir_blind".
   - Helpers are duplicated here intentionally so this module never imports from
     the existing pipeline and cannot break it.
 
@@ -28,14 +28,14 @@ Builders provided:
   Claim, ExplanationOfBenefit — DRG-based (build_claim, build_eob)
   Practitioner (ICU caregiver) — build_icu_caregiver
 
-BLINDING RULE (applied in golddata_fhir_gen.py, not here):
+BLINDING RULE (applied in fhir_blind_gen.py, not here):
   Condition, Procedure, MedicationRequest, MedicationStatement, MedicationDispense,
   MedicationAdministration (inputevents, ingredientevents), and
   DocumentReference are excluded for the latest hospital encounter (latest_hadm)
   and latest ED stay (latest_ed_stay). All prior encounters have full data.
   Testing variant (include_notes=True) adds back latest-encounter notes.
 
-Called exclusively by golddata_fhir_gen.py.
+Called exclusively by fhir_blind_gen.py.
 """
 
 import base64
@@ -49,18 +49,18 @@ _RANGE_RE = re.compile(r"^(\d*\.?\d+)\s*-\s*(\d*\.?\d+)$")
 
 # ── UUID namespace — distinct from standard pipeline's namespace ───────────────
 # Standard pipeline uses: 6ba7b810-9dad-11d1-80b4-00c04fd430c8 (DNS root)
-# Golddata uses a v5 child derived from that root to stay deterministic but separate.
+# FHIR (Blinded) uses a v5 child derived from that root to stay deterministic but separate.
 _NS_SEED = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
-_NS = uuid.uuid5(_NS_SEED, "golddata-fhir-pipeline")
+_NS = uuid.uuid5(_NS_SEED, "fhir-blind-pipeline")
 
-BIDMC_UUID = str(uuid.uuid5(_NS, "golddata::org::BIDMC"))
+BIDMC_UUID = str(uuid.uuid5(_NS, "fhir_blind::org::BIDMC"))
 BIDMC_NAME = "Beth Israel Deaconess Medical Center"
 
 # Source tag applied to every resource meta
-_GOLDDATA_TAG = {
+_FHIR_BLIND_TAG = {
     "system": "http://mimic.mit.edu/fhir/tag/pipeline",
-    "code": "golddata_fhir",
-    "display": "GoldData FHIR — latest encounter diagnoses & treatments excluded",
+    "code": "fhir_blind",
+    "display": "FHIR (Blinded) — latest encounter diagnoses & treatments excluded",
 }
 
 
@@ -68,7 +68,7 @@ _GOLDDATA_TAG = {
 
 
 def _uuid(*keys: Any) -> str:
-    return str(uuid.uuid5(_NS, "golddata::" + "::".join(str(k) for k in keys)))
+    return str(uuid.uuid5(_NS, "fhir_blind::" + "::".join(str(k) for k in keys)))
 
 
 def _numeric_value(value: Any) -> int | float | None:
@@ -139,7 +139,7 @@ def _icd_system(version: int) -> str:
 
 
 def _meta() -> dict:
-    return {"tag": [_GOLDDATA_TAG]}
+    return {"tag": [_FHIR_BLIND_TAG]}
 
 
 def _entry(resource: dict) -> dict:
@@ -1743,14 +1743,14 @@ def build_bundle(entries: list[dict], latest_hadm_id: int | None = None) -> dict
         "resourceType": "Bundle",
         "type": "transaction",
         "meta": {
-            "tag": [_GOLDDATA_TAG],
+            "tag": [_FHIR_BLIND_TAG],
         },
         "entry": entries,
     }
     if latest_hadm_id is not None:
         bundle["meta"]["extension"] = [
             {
-                "url": "http://mimic.mit.edu/fhir/StructureDefinition/golddata-blinded-hadm",
+                "url": "http://mimic.mit.edu/fhir/StructureDefinition/fhir-blinded-hadm",
                 "valueInteger": latest_hadm_id,
             }
         ]

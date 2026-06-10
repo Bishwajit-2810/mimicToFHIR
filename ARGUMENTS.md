@@ -12,13 +12,13 @@ python main.py <subcommand> [options]
 | `load`     | Load MIMIC-IV CSV.gz files into PostgreSQL                             | (database)                                 |
 | `reindex`  | Create `subject_id` indexes (run once after load — makes queries fast) | (database)                                 |
 | `convert`  | PostgreSQL → flat FHIR R4 NDJSON (one file per resource type)          | `fhir_output/`                             |
-| `bundle`   | Gold Data pipeline → one FHIR bundle JSON per patient                       | `golddata_fhir_bundles/`                            |
-| `golddata` | Blind pipeline (latest encounter has no Dx / Meds / Notes)             | `fhir_bundles/`                   |
-| `all`      | Run `bundle` + `golddata` on the **same** patients (recommended)       | `golddata_fhir_bundles/` + `fhir_bundles/` |
+| `bundle`   | FHIR pipeline → one FHIR bundle JSON per patient                       | `fhir_bundles/`                            |
+| `fhir_blind` | Blind pipeline (latest encounter has no Dx / Meds / Notes)             | `fhir_blind_bundles/`                   |
+| `all`      | Run `bundle` + `fhir_blind` on the **same** patients (recommended)       | `fhir_bundles/` + `fhir_blind_bundles/` |
 
 ---
 
-## Batch options (`bundle` / `golddata` / `all`)
+## Batch options (`bundle` / `fhir_blind` / `all`)
 
 | Flag                       | Default               | Meaning                                              |
 | -------------------------- | --------------------- | ---------------------------------------------------- |
@@ -30,24 +30,24 @@ python main.py <subcommand> [options]
 | `--random` / `--no-random` | `--random`            | Random sample vs. sequential by `subject_id`         |
 
 > `all` always picks its patient set **once** and feeds the same list to both
-> pipelines, so the Gold Data and FHIR (Blind) outputs cover identical patients.
+> pipelines, so the FHIR and FHIR (Blinded) outputs cover identical patients.
 
 ---
 
-## Cohort filters (`bundle` / `golddata` / `all`)
+## Cohort filters (`bundle` / `fhir_blind` / `all`)
 
 Pass one or more of these to extract only the matching patients. Output is
 redirected to a self-describing folder under `filtered/`:
 
 ```
 filtered/<slug>/
-├── golddata/    ← full clinical bundles  (from the bundle pipeline)
-└── fhir/        ← blinded bundles         (from the golddata pipeline)
+├── fhir/        ← full clinical bundles  (from the bundle pipeline)
+└── fhir_blind/  ← blinded bundles        (from the fhir_blind pipeline)
 ```
 
 `<slug>` is built from the active filters, e.g. `gender-male_service-med`.
 Running the `all` command produces **both** subfolders for the same patients;
-running `bundle` or `golddata` alone produces just the one it owns.
+running `bundle` or `fhir_blind` alone produces just the one it owns.
 
 All filters combine with **AND**. A patient is selected when _any_ of their
 admissions / services satisfy the admission/service-level filters (the exported
@@ -126,7 +126,7 @@ python main.py all --limit 100
 
 # Just one pipeline
 python main.py bundle --limit 50
-python main.py golddata --limit 50
+python main.py fhir_blind --limit 50
 
 # Specific patients
 python main.py all --subject-ids 10000032,10000084
@@ -135,25 +135,25 @@ python main.py all --subject-ids 10000032,10000084
 ### Filtered cohorts
 
 ```bash
-# All male patients → filtered/gender-male/{fhir,golddata}/
+# All male patients → filtered/gender-male/{fhir,fhir_blind}/
 python main.py all --gender male
 
 # Male patients on the Medicine service
 python main.py all --gender male --service medicine
-#   → filtered/gender-male_service-med/{fhir,golddata}/
+#   → filtered/gender-male_service-med/{fhir,fhir_blind}/
 
 # Female, age 65+, Medicare, admitted via the ER, capped at 500
 python main.py all --gender female --min-age 65 --insurance medicare \
                    --admit-source emergency --limit 500
 
 # Filters work on individual pipelines too
-python main.py bundle   --gender male --service medicine   # → .../golddata/
-python main.py golddata --deceased --language english      # → .../fhir/
+python main.py bundle   --gender male --service medicine   # → .../fhir/
+python main.py fhir_blind --deceased --language english      # → .../fhir_blind/
 ```
 
 ### Run the dashboards
 
 ```bash
 uvicorn web.app:app          --host 0.0.0.0 --port 8095 --reload  # full
-uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload  # blind
+uvicorn web.fhir_blind_app:app --host 0.0.0.0 --port 8096 --reload  # blind
 ```

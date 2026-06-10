@@ -13,11 +13,11 @@ transaction bundles, and serves them through two independent web dashboards.
 
 | Pipeline           | Output dir               | Port |      Conditions      |      Procedures      |     Medications      |        Notes         | Vitals / Labs |
 | ------------------ | ------------------------ | ---- | :------------------: | :------------------: | :------------------: | :------------------: | :-----------: |
-| `main.py bundle`   | `golddata_fhir_bundles/`          | 8095 |        ✅ all        |        ✅ all        |        ✅ all        |        ✅ all        |      ✅       |
-| `main.py golddata` | `fhir_bundles/` | 8096 | prior ✅ + latest ❌ | prior ✅ + latest ❌ | prior ✅ + latest ❌ | prior ✅ + latest ❌ |      ✅       |
+| `main.py bundle`   | `fhir_bundles/`          | 8095 |        ✅ all        |        ✅ all        |        ✅ all        |        ✅ all        |      ✅       |
+| `main.py fhir_blind` | `fhir_blind_bundles/` | 8096 | prior ✅ + latest ❌ | prior ✅ + latest ❌ | prior ✅ + latest ❌ | prior ✅ + latest ❌ |      ✅       |
 
-**Gold Data** — complete clinical record for every encounter, no blinding.  
-**FHIR (Blind)** — latest hospital encounter and latest ED stay are blinded: ICD diagnoses, procedures, medications, and notes removed from the most recent visit only. All prior encounters remain intact.
+**FHIR** — complete clinical record for every encounter, no blinding.  
+**FHIR (Blinded)** — latest hospital encounter and latest ED stay are blinded: ICD diagnoses, procedures, medications, and notes removed from the most recent visit only. All prior encounters remain intact.
 
 ---
 
@@ -148,19 +148,19 @@ python main.py reindex
 python main.py all
 
 # Or individually (100 random patients each by default)
-python main.py bundle    # → golddata_fhir_bundles/
-python main.py golddata  # → fhir_bundles/
+python main.py bundle    # → fhir_bundles/
+python main.py fhir_blind  # → fhir_blind_bundles/
 
 # Extract a filtered cohort into its own folder under filtered/
 python main.py all --gender male --service medicine
-#   → filtered/gender-male_service-med/{fhir,golddata}/
+#   → filtered/gender-male_service-med/{fhir,fhir_blind}/
 ```
 
 ### 5. Run the dashboards
 
 ```bash
 uvicorn web.app:app          --host 0.0.0.0 --port 8095 --reload
-uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
+uvicorn web.fhir_blind_app:app --host 0.0.0.0 --port 8096 --reload
 ```
 
 ---
@@ -176,11 +176,11 @@ Subcommands:
   load      Load MIMIC-IV CSV.gz files into PostgreSQL
   reindex   Create subject_id indexes after loading (run once — makes queries fast)
   convert   PostgreSQL → flat FHIR NDJSON (one file per resource type)
-  bundle    Gold Data pipeline → golddata_fhir_bundles/
-  golddata  Blind pipeline → fhir_bundles/  (latest encounter: no Dx/Meds/Notes)
+  bundle    FHIR pipeline → fhir_bundles/
+  fhir_blind  Blind pipeline → fhir_blind_bundles/  (latest encounter: no Dx/Meds/Notes)
   all       Run both on the same random patients (recommended)
 
-Common batch options (bundle / golddata / all):
+Common batch options (bundle / fhir_blind / all):
   --dsn              Override PostgreSQL DSN
   --output           Override output directory
   --limit N          Number of patients (default: 100)
@@ -188,7 +188,7 @@ Common batch options (bundle / golddata / all):
   --subject-ids      Comma-separated list of specific subject IDs
   --random           Random patient sample, default ON (use --no-random for sequential)
 
-Cohort filters (bundle / golddata / all) — extract a subset into filtered/<slug>/:
+Cohort filters (bundle / fhir_blind / all) — extract a subset into filtered/<slug>/:
   --gender male|female      hosp.patients.gender
   --min-age / --max-age     hosp.patients.anchor_age (inclusive range)
   --anchor-year YYYY        hosp.patients.anchor_year (exact)
@@ -216,7 +216,7 @@ load-specific options:
 
 ## FHIR Resource Mappings
 
-| MIMIC-IV source                       | FHIR R4 resource                   | bundle |      golddata      |
+| MIMIC-IV source                       | FHIR R4 resource                   | bundle |      fhir_blind      |
 | ------------------------------------- | ---------------------------------- | :----: | :----------------: |
 | `hosp.patients`                       | `Patient`                          |   ✓    |         ✓          |
 | `hosp.admissions`                     | `Encounter` (hospital)             |   ✓    |         ✓          |
@@ -250,7 +250,7 @@ load-specific options:
 > **Lab cap:** 500 most-recent lab events per patient.  
 > **Note cap:** 20 most-recent notes per type (discharge + radiology) per patient.
 >
-> **Per-patient caps** (apply to both `bundle` and `golddata` pipelines):
+> **Per-patient caps** (apply to both `bundle` and `fhir_blind` pipelines):
 >
 > | Resource                                            | Cap  |
 > | --------------------------------------------------- | ---- |
@@ -284,7 +284,7 @@ the top identifies which pipeline is active and which resources are included.
 | **Clinical Notes**        | Discharge summaries · Radiology reports · Searchable full text                                |
 
 Conditions and Medications sections show "No data recorded" for the latest
-encounter on FHIR (Blind) bundles — this is correct and expected.
+encounter on FHIR (Blinded) bundles — this is correct and expected.
 
 ---
 
@@ -292,10 +292,10 @@ encounter on FHIR (Blind) bundles — this is correct and expected.
 
 | Directory                | Pipeline | Contents                                               |
 | ------------------------ | -------- | ------------------------------------------------------ |
-| `golddata_fhir_bundles/`          | bundle   | One JSON per patient — full clinical data, no blinding |
-| `fhir_bundles/` | golddata | One JSON per patient — latest encounter blinded        |
+| `fhir_bundles/`          | bundle   | One JSON per patient — full clinical data, no blinding |
+| `fhir_blind_bundles/` | fhir_blind | One JSON per patient — latest encounter blinded        |
 | `fhir_output/`           | convert  | Flat NDJSON per resource type (optional)               |
-| `filtered/<slug>/`       | filtered | Cohort extract — `fhir/` + `golddata/` subfolders      |
+| `filtered/<slug>/`       | filtered | Cohort extract — `fhir_blind/` + `fhir/` subfolders      |
 
 ---
 
@@ -306,7 +306,7 @@ encounter on FHIR (Blind) bundles — this is correct and expected.
 | `MIMIC_DSN`      | `host=localhost port=5433 dbname=mimiciv user=mimic password=mimic` | all pipelines                            |
 | `MIMIC_DATA_DIR` | `dataset/`                                                          | load — hosp/, icu/, ed/ parent directory |
 | `MIMIC_NOTE_DIR` | `dataset/note/`                                                     | load — note CSV directory                |
-| `GOLDDATA_OUT`   | `fhir_bundles`                                             | golddata output directory                |
+| `FHIR_BLIND_OUT`   | `fhir_blind_bundles`                                             | FHIR (Blinded) output directory                |
 
 ---
 
@@ -320,15 +320,15 @@ encounter on FHIR (Blind) bundles — this is correct and expected.
 │
 ├── etl/
 │   ├── load_mimic.py            # CSV.gz → PostgreSQL loader (hosp + icu + ed + note)
-│   ├── mimic_to_bundle.py       # Gold Data pipeline — all resources, no blinding
+│   ├── mimic_to_bundle.py       # FHIR pipeline — all resources, no blinding
 │   ├── mimic_to_fhir.py         # Flat NDJSON per resource type (optional)
-│   ├── golddata_fhir_gen.py     # Blind pipeline — latest encounter blinded
-│   └── golddata_builder.py      # FHIR builders for golddata (isolated UUID namespace)
+│   ├── fhir_blind_gen.py     # Blind pipeline — latest encounter blinded
+│   └── fhir_blind_builder.py      # FHIR builders for FHIR (Blinded) (isolated UUID namespace)
 │
 ├── web/
 │   ├── parser.py                # Shared FHIR bundle → API response parser
-│   ├── app.py                   # Gold Data dashboard  (port 8095, golddata_fhir_bundles/)
-│   └── golddata_app.py          # FHIR (Blind) dashboard  (port 8096, fhir_bundles/)
+│   ├── app.py                   # FHIR dashboard  (port 8095, fhir_bundles/)
+│   └── fhir_blind_app.py          # FHIR (Blinded) dashboard  (port 8096, fhir_blind_bundles/)
 │
 ├── static/                      # Shared UI (served by both apps)
 │   ├── index.html
@@ -339,8 +339,8 @@ encounter on FHIR (Blind) bundles — this is correct and expected.
 │   ├── 01_schema.sql            # DDL for all tables (hosp + icu + ed + note schemas)
 │   └── 02_indexes.sql           # subject_id indexes — run via `python main.py reindex`
 │
-├── golddata_fhir_bundles/       # Gold Data — full clinical bundles
-├── fhir_bundles/       # FHIR (Blind) bundles (latest encounter blinded)
+├── fhir_bundles/       # FHIR — full clinical bundles
+├── fhir_blind_bundles/       # FHIR (Blinded) bundles (latest encounter blinded)
 └── fhir_output/                 # Flat NDJSON (optional)
 ```
 

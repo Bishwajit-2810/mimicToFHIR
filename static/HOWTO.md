@@ -7,11 +7,11 @@ This guide covers running the dashboards and navigating the patient data.
 From the project root:
 
 ```bash
-# Gold Data dashboard — complete clinical data (port 8095)
+# FHIR dashboard — complete clinical data (port 8095)
 uvicorn web.app:app --host 0.0.0.0 --port 8095 --reload
 
-# FHIR (Blind) dashboard — latest encounter blinded: no diagnoses, no procedures, no medications, no notes (port 8096)
-uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
+# FHIR (Blinded) dashboard — latest encounter blinded: no diagnoses, no procedures, no medications, no notes (port 8096)
+uvicorn web.fhir_blind_app:app --host 0.0.0.0 --port 8096 --reload
 
 # Testing dashboard — latest encounter blinded + notes restored (port 8097)
 uvicorn web.testing_app:app --host 0.0.0.0 --port 8097 --reload
@@ -19,8 +19,8 @@ uvicorn web.testing_app:app --host 0.0.0.0 --port 8097 --reload
 
 | URL                     | Pipeline | Latest Conditions | Latest Meds | Notes |
 | ----------------------- | -------- | :---------------: | :---------: | :---: |
-| <http://localhost:8095> | Gold Data | ✓                 | ✓           | ✓     |
-| <http://localhost:8096> | FHIR (Blind) | ✗                 | ✗           | ✗     |
+| <http://localhost:8095> | FHIR | ✓                 | ✓           | ✓     |
+| <http://localhost:8096> | FHIR (Blinded) | ✗                 | ✗           | ✗     |
 | <http://localhost:8097> | Testing  | ✗                 | ✗           | ✓     |
 
 **Blinding applies only to the most recent encounter.** Prior encounters always
@@ -38,13 +38,13 @@ Press **Ctrl + C** to stop the server.
 A coloured banner appears below the patient info bar on every page. It identifies
 which pipeline is active and shows inclusion chips for each resource type:
 
-- **Blue banner** — Gold Data (all data, no blinding)
-- **Amber banner** — FHIR (Blind) pipeline (latest encounter blinded: vitals/labs only; no conditions, procedures, medications, or notes)
+- **Blue banner** — FHIR (all data, no blinding)
+- **Amber banner** — FHIR (Blinded) pipeline (latest encounter blinded: vitals/labs only; no conditions, procedures, medications, or notes)
 - **Green banner** — Testing pipeline (latest encounter blinded + clinical notes)
 
 Each chip is green when that resource type is included for the latest encounter,
 or grey with strikethrough when excluded. Conditions, Procedures, and Medications
-chips will show as excluded on the FHIR (Blind) and Testing dashboards — this is
+chips will show as excluded on the FHIR (Blinded) and Testing dashboards — this is
 correct and expected for the most recent visit.
 
 ---
@@ -104,10 +104,10 @@ blue (normal) or red (out-of-range):
 
 **Current Medications** — all `MedicationRequest` resources for prior encounters,
 deduplicated by drug name with dose and route. Shows "No data recorded" for the
-latest encounter on FHIR (Blind) and Testing dashboards.
+latest encounter on FHIR (Blinded) and Testing dashboards.
 
 **Past Medical History** — all `Condition` resources with ICD-9/10 codes and
-clinical status. Latest encounter conditions are excluded on FHIR (Blind) and Testing.
+clinical status. Latest encounter conditions are excluded on FHIR (Blinded) and Testing.
 
 **Suggested Tests** — microbiology and diagnostic orders from `DiagnosticReport`
 resources, sorted by most recent first.
@@ -126,7 +126,7 @@ The primary reason for the patient's **most recent** hospital encounter.
   discharge disposition, insurance.
 - **Associated Diagnoses** — all conditions linked to that encounter.
 
-Shows "No data recorded" on FHIR (Blind) and Testing dashboards — the latest
+Shows "No data recorded" on FHIR (Blinded) and Testing dashboards — the latest
 encounter's conditions are blinded.
 
 ---
@@ -135,13 +135,13 @@ encounter's conditions are blinded.
 
 **Suggested Diagnoses** — all `Condition` resources in ICD sequence order.
 Each entry shows the condition name, ICD code, and clinical status badge.
-Latest encounter diagnoses are absent on FHIR (Blind) and Testing.
+Latest encounter diagnoses are absent on FHIR (Blinded) and Testing.
 
 **Treatment & Medications** — full medication list with drug name, dose, and route.
-Latest encounter prescriptions are absent on FHIR (Blind) and Testing.
+Latest encounter prescriptions are absent on FHIR (Blinded) and Testing.
 
 **Procedures Performed** — all `Procedure` resources with ICD descriptions and dates.
-Latest encounter procedures are absent on FHIR (Blind) and Testing (prior encounter procedures are shown).
+Latest encounter procedures are absent on FHIR (Blinded) and Testing (prior encounter procedures are shown).
 
 ---
 
@@ -163,12 +163,12 @@ Each encounter card also contains:
 - A vitals summary for that specific encounter
 - Lab results recorded during that encounter
 - Clinical notes (discharge summary + radiology reports) — shown for prior
-  encounters on all pipelines; for the latest encounter only on Gold Data and Testing
+  encounters on all pipelines; for the latest encounter only on FHIR and Testing
 
 The **Synthesized clinical note** box at the bottom of each encounter card is
 built entirely from the FHIR resources in the bundle (vitals, labs, procedures,
 microbiology). It is generated locally from parsed data — not stored text. On
-Gold Data and Testing bundles where real `DocumentReference` resources are present,
+FHIR and Testing bundles where real `DocumentReference` resources are present,
 a "Real notes available" badge appears and the actual notes are shown below.
 
 ---
@@ -185,7 +185,7 @@ section-level detail extensions where available. Notes are searchable using the
 **Search notes…** input.
 
 This tab shows notes for all prior encounters on all three dashboards. For the
-latest encounter, notes appear on Gold Data and Testing but are excluded on FHIR (Blind).
+latest encounter, notes appear on FHIR and Testing but are excluded on FHIR (Blinded).
 
 ---
 

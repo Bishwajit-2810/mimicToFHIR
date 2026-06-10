@@ -1,13 +1,13 @@
 """
-golddata_app.py — GoldData FHIR Dashboard
+fhir_blind_app.py — FHIR (Blinded) Dashboard
 
-Serves golddata_fhir_bundles/ on port 8096 using the same static/ UI as app.py.
+Serves fhir_blind_bundles/ on port 8096 using the same static/ UI as app.py.
 
-  Port 8095  →  web.app          reads fhir_bundles/          (full clinical data)
-  Port 8096  →  web.golddata_app reads golddata_fhir_bundles/ (all diagnoses & medications excluded)
+  Port 8095  →  web.app          reads fhir_bundles/        (full clinical data)
+  Port 8096  →  web.fhir_blind_app reads fhir_blind_bundles/  (all diagnoses & medications excluded)
 
 Start:
-    uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
+    uvicorn web.fhir_blind_app:app --host 0.0.0.0 --port 8096 --reload
 """
 
 import json
@@ -24,10 +24,10 @@ from fastapi.staticfiles import StaticFiles
 
 from .parser import parse_bundle, concept_text
 
-app = FastAPI(title="GoldData FHIR Dashboard")
+app = FastAPI(title="FHIR (Blinded) Dashboard")
 
-BUNDLES_DIR = Path("fhir_bundles")
-STD_BUNDLES_DIR = Path("golddata_fhir_bundles")
+BUNDLES_DIR = Path("fhir_blind_bundles")
+STD_BUNDLES_DIR = Path("fhir_bundles")
 STATIC_DIR = Path("static")
 
 _STD_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
@@ -35,8 +35,8 @@ _STD_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 _running: dict[str, dict] = {}
 
 _DATASET_INFO = {
-    "mode": "golddata",
-    "label": "FHIR (Blind)",
+    "mode": "fhir_blind",
+    "label": "FHIR (Blinded)",
     "description": "Blind dataset — latest encounter: no diagnoses, no procedures, no medications, no clinical notes",
     "includes": {
         "conditions": False,
@@ -54,7 +54,7 @@ _DATASET_INFO = {
 
 def _blinded_hadm(bundle: dict) -> int | None:
     for ext in bundle.get("meta", {}).get("extension", []):
-        if "golddata-blinded-hadm" in ext.get("url", ""):
+        if "fhir-blinded-hadm" in ext.get("url", ""):
             return ext.get("valueInteger")
     return None
 
@@ -136,15 +136,15 @@ def get_patient(patient_id: str):
     result = parse_bundle(bundle)
 
     hadm = _blinded_hadm(bundle)
-    result["golddata"] = {
+    result["fhir_blind"] = {
         "blindedHadm": hadm,
-        "pipelineTag": "golddata_fhir",
+        "pipelineTag": "fhir_blind",
     }
     try:
         std = _read_std_bundle(patient_id)
-        result["golddata"]["excludedConditions"] = _excluded_conditions(std)
+        result["fhir_blind"]["excludedConditions"] = _excluded_conditions(std)
     except Exception:
-        result["golddata"]["excludedConditions"] = []
+        result["fhir_blind"]["excludedConditions"] = []
 
     return result
 
@@ -154,11 +154,11 @@ def api_status():
     gd_count = len(list(BUNDLES_DIR.glob("*.json"))) if BUNDLES_DIR.exists() else 0
     std_count = len(list(STD_BUNDLES_DIR.glob("*.json"))) if STD_BUNDLES_DIR.exists() else 0
     return {
-        "golddata_fhir": {"dir": str(BUNDLES_DIR), "bundleCount": gd_count},
+        "fhir_blind": {"dir": str(BUNDLES_DIR), "bundleCount": gd_count},
         "standard_fhir": {"dir": str(STD_BUNDLES_DIR), "bundleCount": std_count},
         "pipelines": {
             "standard": _pipeline_status("standard"),
-            "golddata": _pipeline_status("golddata"),
+            "fhir_blind": _pipeline_status("fhir_blind"),
         },
     }
 
@@ -171,9 +171,9 @@ def run_standard():
     return result
 
 
-@app.post("/api/run/golddata")
-def run_golddata():
-    result = _run_pipeline("golddata", [sys.executable, "-m", "etl.golddata_fhir_gen"])
+@app.post("/api/run/fhir_blind")
+def run_fhir_blind():
+    result = _run_pipeline("fhir_blind", [sys.executable, "-m", "etl.fhir_blind_gen"])
     if not result["started"]:
         raise HTTPException(status_code=409, detail=result["reason"])
     return result
@@ -192,7 +192,7 @@ def run_status():
                         info["log"] = info["log"][-200:]
             except Exception:
                 pass
-    return {"standard": _pipeline_status("standard"), "golddata": _pipeline_status("golddata")}
+    return {"standard": _pipeline_status("standard"), "fhir_blind": _pipeline_status("fhir_blind")}
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
