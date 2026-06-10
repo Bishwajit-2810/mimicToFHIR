@@ -43,8 +43,8 @@ from etl.mimic_to_bundle import _SERVICE_DISPLAY
 FILTERED_ROOT = Path("filtered")
 
 # Subfolder names inside filtered/<slug>/ — one for each pipeline.
-FHIR_SUBDIR = "fhir"
-GOLD_SUBDIR = "golddata"
+FHIR_SUBDIR = "golddata"
+GOLD_SUBDIR = "fhir"
 
 _NAME_TO_CODE = {display.lower(): code for code, display in _SERVICE_DISPLAY.items()}
 

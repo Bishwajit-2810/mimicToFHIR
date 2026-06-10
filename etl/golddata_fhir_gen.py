@@ -61,7 +61,7 @@ from etl import golddata_builder as bb
 
 _DEFAULT_DSN = "host=localhost port=5433 dbname=mimiciv user=mimic password=mimic"
 DSN = os.getenv("MIMIC_DSN") or _DEFAULT_DSN
-OUTPUT_DIR = Path(os.getenv("GOLDDATA_OUT", "golddata_fhir_bundles"))
+OUTPUT_DIR = Path(os.getenv("GOLDDATA_OUT", "fhir_bundles"))
 
 _CHART_ITEM_IDS = list(bb.CHART_LOINC.keys())
 

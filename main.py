@@ -182,7 +182,7 @@ def cmd_all(args):
     if filters:
         fhir_name, gold_name = FHIR_SUBDIR, GOLD_SUBDIR
     else:
-        fhir_name, gold_name = "fhir_bundles", "golddata_fhir_bundles"
+        fhir_name, gold_name = "golddata_fhir_bundles", "fhir_bundles"
 
     bundle_out = base / fhir_name if base else BUNDLE_OUT
     gold_out = base / gold_name if base else GOLD_OUT

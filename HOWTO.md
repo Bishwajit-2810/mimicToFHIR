@@ -10,23 +10,23 @@
 └────────────────────────────────────────────────────────────────────┘
                    │                    │
                    ▼                    ▼
-        ┌─────────────────┐  ┌─────────────────┐
-        │  Full Pipeline  │  │ GoldData Pipeline│
-        │  fhir_bundles/  │  │golddata_fhir_   │
-        │  port 8095      │  │bundles/         │
-        │                 │  │port 8096        │
-        │  All encounters │  │Prior encounters │
-        │  Conditions  ✓  │  │Conditions  ✓    │
-        │  Medications ✓  │  │Medications ✓    │
-        │  Notes       ✓  │  │Notes       ✓    │
-        │                 │  │                 │
-        │  Latest encounter│  │Latest encounter │
-        │  Conditions  ✓  │  │Conditions  ✗    │
-        │  Procedures  ✓  │  │Procedures  ✗    │
-        │  Medications ✓  │  │Medications ✗    │
-        │  Notes       ✓  │  │Notes       ✗    │
-        │  Vitals/Labs ✓  │  │Vitals/Labs ✓    │
-        └─────────────────┘  └─────────────────┘
+        ┌─────────────────────────┐  ┌─────────────────────────┐
+        │  Gold Data Pipeline     │  │  FHIR (Blind) Pipeline  │
+        │  golddata_fhir_bundles/ │  │  fhir_bundles/          │
+        │  port 8095              │  │  port 8096              │
+        │                         │  │                         │
+        │  All encounters         │  │  Prior encounters       │
+        │  Conditions  ✓          │  │  Conditions  ✓          │
+        │  Medications ✓          │  │  Medications ✓          │
+        │  Notes       ✓          │  │  Notes       ✓          │
+        │                         │  │                         │
+        │  Latest encounter       │  │  Latest encounter       │
+        │  Conditions  ✓          │  │  Conditions  ✗          │
+        │  Procedures  ✓          │  │  Procedures  ✗          │
+        │  Medications ✓          │  │  Medications ✗          │
+        │  Notes       ✓          │  │  Notes       ✗          │
+        │  Vitals/Labs ✓          │  │  Vitals/Labs ✓          │
+        └─────────────────────────┘  └─────────────────────────┘
 ```
 
 **Blinding applies only to the most recent encounter** — the latest hospital
@@ -62,8 +62,8 @@ python main.py reindex
 # ── Step 4: Generate both bundle sets from the same 100 random patients ──────
 python main.py all
 # Output:
-#   fhir_bundles/              ← Full (all data, no blinding)
-#   golddata_fhir_bundles/     ← Latest encounter blinded (no Dx, no Meds, no Notes)
+#   golddata_fhir_bundles/              ← Full (all data, no blinding)
+#   fhir_bundles/     ← Latest encounter blinded (no Dx, no Meds, no Notes)
 
 # ── Step 5: Start dashboards (two separate terminals) ─────────────────────
 uvicorn web.app:app          --host 0.0.0.0 --port 8095 --reload
@@ -72,8 +72,8 @@ uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
 
 | URL                     | Pipeline | Latest Conditions | Latest Meds | Notes |
 | ----------------------- | -------- | :---------------: | :---------: | :---: |
-| <http://localhost:8095> | Full     |         ✓         |      ✓      |   ✓   |
-| <http://localhost:8096> | GoldData |         ✗         |      ✗      |   ✗   |
+| <http://localhost:8095> | Gold Data |         ✓         |      ✓      |   ✓   |
+| <http://localhost:8096> | FHIR (Blind) |         ✗         |      ✗      |   ✗   |
 
 ---
 
@@ -106,7 +106,7 @@ docker exec -it mimic_pg psql -U mimic -d mimiciv
 
 `all` picks N random patients **once** from the database and passes the same list
 to both generators. This guarantees identical patient cohorts across
-`fhir_bundles/` and `golddata_fhir_bundles/`.
+`golddata_fhir_bundles/` and `fhir_bundles/`.
 
 ```bash
 # Default: 100 random patients
@@ -126,13 +126,13 @@ python main.py all --subject-ids 10000032,10000084
 Any of the `all`, `bundle`, and `golddata` commands accept cohort filters. When
 one or more filters is given, only matching patients are selected and the output
 is written to a dedicated, self-describing folder under `filtered/<slug>/`
-instead of the top-level `fhir_bundles/` / `golddata_fhir_bundles/`. Each cohort
+instead of the top-level `golddata_fhir_bundles/` / `fhir_bundles/`. Each cohort
 folder holds two subfolders — one per pipeline:
 
 ```text
 filtered/<slug>/
-├── fhir/        ← full FHIR bundles      (bundle pipeline)
-└── golddata/    ← blind GoldData bundles (golddata pipeline)
+├── golddata/    ← full clinical bundles  (bundle pipeline)
+└── fhir/        ← blinded bundles         (golddata pipeline)
 ```
 
 Filters combine with **AND**.
@@ -148,8 +148,8 @@ python main.py all --gender male --service medicine
 python main.py all --gender female --min-age 65 --limit 500
 
 # Works on individual pipelines too
-python main.py bundle --gender male --service medicine   # → .../fhir/
-python main.py golddata --insurance medicare --expired   # → .../golddata/
+python main.py bundle --gender male --service medicine   # → .../golddata/
+python main.py golddata --insurance medicare --expired   # → .../fhir/
 ```
 
 Running `all` produces both `fhir/` and `golddata/` for the same patients;
@@ -213,7 +213,7 @@ Creates `subject_id` indexes on all 38 queried tables. Run once after the initia
 load. Skips existing indexes (safe to re-run). Critical for the full dataset —
 without indexes, per-patient queries on `icu.chartevents` (432M rows) are very slow.
 
-### Full FHIR bundles
+### Gold Data bundles
 
 ```bash
 python main.py bundle                        # 100 random patients (default)
@@ -222,9 +222,9 @@ python main.py bundle --no-random --limit 100
 python main.py bundle --subject-ids 10000032,10000084
 ```
 
-Output → `fhir_bundles/` — all resources, no blinding.
+Output → `golddata_fhir_bundles/` — all resources, no blinding.
 
-### GoldData FHIR bundles
+### FHIR (Blind) bundles
 
 ```bash
 python main.py golddata
@@ -232,7 +232,7 @@ python main.py golddata --limit 50
 python main.py golddata --subject-ids 10000032,10000084
 ```
 
-Output → `golddata_fhir_bundles/` — latest encounter is blinded: no `Condition`,
+Output → `fhir_bundles/` — latest encounter is blinded: no `Condition`,
 no `Procedure`, no `MedicationRequest`, no `MedicationStatement` (ED),
 no `MedicationDispense` (ED), no `MedicationAdministration` (ICU),
 no `DocumentReference`. All prior encounters are fully included.
@@ -253,13 +253,13 @@ uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
 | `MIMIC_DSN`      | `host=localhost port=5433 dbname=mimiciv user=mimic password=mimic` |
 | `MIMIC_DATA_DIR` | `dataset/`                                                          |
 | `MIMIC_NOTE_DIR` | `dataset/note/`                                                     |
-| `GOLDDATA_OUT`   | `golddata_fhir_bundles`                                             |
+| `GOLDDATA_OUT`   | `fhir_bundles`                                             |
 
 ---
 
 ## What Each Bundle Contains
 
-| Resource type                    | Source                  | Full |      GoldData      |
+| Resource type                    | Source                  | Gold Data | FHIR (Blind) |
 | -------------------------------- | ----------------------- | :--: | :----------------: |
 | `Patient`                        | hosp.patients           |  ✓   |         ✓          |
 | `Encounter` (hospital)           | hosp.admissions         |  ✓   |         ✓          |
@@ -316,8 +316,8 @@ pip install psycopg2-binary
 ### Dashboard shows no data
 
 ```bash
-ls fhir_bundles/           # for port 8095
-ls golddata_fhir_bundles/  # for port 8096
+ls golddata_fhir_bundles/           # for port 8095
+ls fhir_bundles/  # for port 8096
 ```
 
 If empty, run `python main.py all`.

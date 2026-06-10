@@ -52,7 +52,7 @@ DSN = os.getenv(
     "MIMIC_DSN",
     "host=localhost port=5433 dbname=mimiciv user=mimic password=mimic",
 )
-OUTPUT_DIR = Path("fhir_bundles")
+OUTPUT_DIR = Path("golddata_fhir_bundles")
 
 # Deterministic UUID namespace (DNS namespace reused as a stable seed)
 _NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")

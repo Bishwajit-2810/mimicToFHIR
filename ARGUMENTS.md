@@ -12,9 +12,9 @@ python main.py <subcommand> [options]
 | `load`     | Load MIMIC-IV CSV.gz files into PostgreSQL                             | (database)                                 |
 | `reindex`  | Create `subject_id` indexes (run once after load — makes queries fast) | (database)                                 |
 | `convert`  | PostgreSQL → flat FHIR R4 NDJSON (one file per resource type)          | `fhir_output/`                             |
-| `bundle`   | Full pipeline → one FHIR bundle JSON per patient                       | `fhir_bundles/`                            |
-| `golddata` | Blind pipeline (latest encounter has no Dx / Meds / Notes)             | `golddata_fhir_bundles/`                   |
-| `all`      | Run `bundle` + `golddata` on the **same** patients (recommended)       | `fhir_bundles/` + `golddata_fhir_bundles/` |
+| `bundle`   | Gold Data pipeline → one FHIR bundle JSON per patient                       | `golddata_fhir_bundles/`                            |
+| `golddata` | Blind pipeline (latest encounter has no Dx / Meds / Notes)             | `fhir_bundles/`                   |
+| `all`      | Run `bundle` + `golddata` on the **same** patients (recommended)       | `golddata_fhir_bundles/` + `fhir_bundles/` |
 
 ---
 
@@ -30,7 +30,7 @@ python main.py <subcommand> [options]
 | `--random` / `--no-random` | `--random`            | Random sample vs. sequential by `subject_id`         |
 
 > `all` always picks its patient set **once** and feeds the same list to both
-> pipelines, so the FHIR and GoldData outputs cover identical patients.
+> pipelines, so the Gold Data and FHIR (Blind) outputs cover identical patients.
 
 ---
 
@@ -41,8 +41,8 @@ redirected to a self-describing folder under `filtered/`:
 
 ```
 filtered/<slug>/
-├── fhir/        ← full FHIR bundles      (from the bundle pipeline)
-└── golddata/    ← blind GoldData bundles (from the golddata pipeline)
+├── golddata/    ← full clinical bundles  (from the bundle pipeline)
+└── fhir/        ← blinded bundles         (from the golddata pipeline)
 ```
 
 `<slug>` is built from the active filters, e.g. `gender-male_service-med`.
@@ -147,8 +147,8 @@ python main.py all --gender female --min-age 65 --insurance medicare \
                    --admit-source emergency --limit 500
 
 # Filters work on individual pipelines too
-python main.py bundle   --gender male --service medicine   # → .../fhir/
-python main.py golddata --deceased --language english      # → .../golddata/
+python main.py bundle   --gender male --service medicine   # → .../golddata/
+python main.py golddata --deceased --language english      # → .../fhir/
 ```
 
 ### Run the dashboards

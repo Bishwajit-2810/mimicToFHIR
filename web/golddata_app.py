@@ -26,8 +26,8 @@ from .parser import parse_bundle, concept_text
 
 app = FastAPI(title="GoldData FHIR Dashboard")
 
-BUNDLES_DIR = Path("golddata_fhir_bundles")
-STD_BUNDLES_DIR = Path("fhir_bundles")
+BUNDLES_DIR = Path("fhir_bundles")
+STD_BUNDLES_DIR = Path("golddata_fhir_bundles")
 STATIC_DIR = Path("static")
 
 _STD_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
@@ -36,7 +36,7 @@ _running: dict[str, dict] = {}
 
 _DATASET_INFO = {
     "mode": "golddata",
-    "label": "Gold Data (Blind)",
+    "label": "FHIR (Blind)",
     "description": "Blind dataset — latest encounter: no diagnoses, no procedures, no medications, no clinical notes",
     "includes": {
         "conditions": False,
