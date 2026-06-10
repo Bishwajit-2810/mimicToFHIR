@@ -150,6 +150,10 @@ python main.py all
 # Or individually (100 random patients each by default)
 python main.py bundle    # → fhir_bundles/
 python main.py golddata  # → golddata_fhir_bundles/
+
+# Extract a filtered cohort into its own folder under filtered/
+python main.py all --gender male --service medicine
+#   → filtered/gender-male_service-med/{fhir,golddata}/
 ```
 
 ### 5. Run the dashboards
@@ -162,6 +166,8 @@ uvicorn web.golddata_app:app --host 0.0.0.0 --port 8096 --reload
 ---
 
 ## CLI Reference
+
+See [ARGUMENTS.md](ARGUMENTS.md) for the full argument reference and run recipes.
 
 ```
 python main.py <subcommand> [options]
@@ -181,6 +187,24 @@ Common batch options (bundle / golddata / all):
   --offset N         Skip first N patients (sequential mode only)
   --subject-ids      Comma-separated list of specific subject IDs
   --random           Random patient sample, default ON (use --no-random for sequential)
+
+Cohort filters (bundle / golddata / all) — extract a subset into filtered/<slug>/:
+  --gender male|female      hosp.patients.gender
+  --min-age / --max-age     hosp.patients.anchor_age (inclusive range)
+  --anchor-year YYYY        hosp.patients.anchor_year (exact)
+  --anchor-year-group TEXT  hosp.patients.anchor_year_group (substring)
+  --deceased                patients with a recorded date of death
+  --race TEXT               hosp.admissions.race (substring)
+  --ethnicity TEXT          hosp.admissions.race (substring, e.g. hispanic)
+  --language TEXT           hosp.admissions.language (substring)
+  --marital-status TEXT     hosp.admissions.marital_status (substring)
+  --service CODE|name       hosp.services.curr_service (MED or "medicine")
+  --admission-type TEXT     hosp.admissions.admission_type (substring)
+  --admit-source TEXT       hosp.admissions.admission_location (substring)
+  --discharge-location TEXT hosp.admissions.discharge_location (substring)
+  --insurance TEXT          hosp.admissions.insurance (substring)
+  --expired                 patients with an in-hospital death
+  (filters combine with AND; output → filtered/<slug>/, e.g. filtered/gender-male_service-med/)
 
 load-specific options:
   --data-dir     Root dir containing hosp/, icu/, ed/ (default: dataset/)
@@ -271,6 +295,7 @@ encounter on GoldData bundles — this is correct and expected.
 | `fhir_bundles/`          | bundle   | One JSON per patient — full clinical data, no blinding |
 | `golddata_fhir_bundles/` | golddata | One JSON per patient — latest encounter blinded        |
 | `fhir_output/`           | convert  | Flat NDJSON per resource type (optional)               |
+| `filtered/<slug>/`       | filtered | Cohort extract — `fhir/` + `golddata/` subfolders      |
 
 ---
 

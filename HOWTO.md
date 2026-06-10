@@ -121,6 +121,72 @@ python main.py all --subject-ids 10000032,10000084
 
 ---
 
+## Cohort Filters — Extract a Subset into Its Own Folder
+
+Any of the `all`, `bundle`, and `golddata` commands accept cohort filters. When
+one or more filters is given, only matching patients are selected and the output
+is written to a dedicated, self-describing folder under `filtered/<slug>/`
+instead of the top-level `fhir_bundles/` / `golddata_fhir_bundles/`. Each cohort
+folder holds two subfolders — one per pipeline:
+
+```text
+filtered/<slug>/
+├── fhir/        ← full FHIR bundles      (bundle pipeline)
+└── golddata/    ← blind GoldData bundles (golddata pipeline)
+```
+
+Filters combine with **AND**.
+
+```bash
+# All male patients → filtered/gender-male/{fhir,golddata}/
+python main.py all --gender male
+
+# Male patients on the Medicine service → filtered/gender-male_service-med/
+python main.py all --gender male --service medicine
+
+# Female, age 65+, capped at 500 → filtered/gender-female_age-65-max/
+python main.py all --gender female --min-age 65 --limit 500
+
+# Works on individual pipelines too
+python main.py bundle --gender male --service medicine   # → .../fhir/
+python main.py golddata --insurance medicare --expired   # → .../golddata/
+```
+
+Running `all` produces both `fhir/` and `golddata/` for the same patients;
+running `bundle` or `golddata` alone produces just the one it owns.
+
+There is one flag per dimension shown on the dashboard (demographics + encounter
+details):
+
+| Filter | Matches |
+| --- | --- |
+| `--gender male\|female` | `hosp.patients.gender` (M/F) |
+| `--min-age N` / `--max-age N` | `hosp.patients.anchor_age` (inclusive) |
+| `--anchor-year YYYY` | `hosp.patients.anchor_year` (exact) |
+| `--anchor-year-group TEXT` | `hosp.patients.anchor_year_group` (substring, e.g. `2011`) |
+| `--deceased` | patients with a recorded date of death (`dod IS NOT NULL`) |
+| `--race TEXT` | `hosp.admissions.race` (case-insensitive substring) |
+| `--ethnicity TEXT` | `hosp.admissions.race` (substring, e.g. `hispanic`) |
+| `--language TEXT` | `hosp.admissions.language` (substring) |
+| `--marital-status TEXT` | `hosp.admissions.marital_status` (substring) |
+| `--service CODE\|name` | `hosp.services.curr_service` — code (`MED`) or name (`medicine`) |
+| `--admission-type TEXT` | `hosp.admissions.admission_type` (substring) |
+| `--admit-source TEXT` | `hosp.admissions.admission_location` (substring) |
+| `--discharge-location TEXT` | `hosp.admissions.discharge_location` (substring) |
+| `--insurance TEXT` | `hosp.admissions.insurance` (substring) |
+| `--expired` | patients with an in-hospital death (`hospital_expire_flag = 1`) |
+
+Service codes: `CMED` (Cardiac Medicine), `CSURG` (Cardiac Surgery), `DENT`,
+`ENT`, `EYE` (Ophthalmology), `GU`, `GYN`, `MED` (Medicine), `NB`/`NBB`
+(Newborn), `NMED` (Neurology), `NSURG`, `OBS`, `OMED` (Oncology), `ORTHO`,
+`PSURG` (Plastic), `PSYCH`, `SURG`, `TRAUM`, `TSURG` (Thoracic), `VSURG`
+(Vascular).
+
+The default random sample is still capped at 10,000 patients; use `--limit` to
+change it.
+
+---
+
 ## Individual Pipeline Commands
 
 ### Load data

@@ -53,7 +53,10 @@ correct and expected for the most recent visit.
 
 The **Select Patient** dropdown in the top-right header lists all available
 patients by their MIMIC-IV subject ID. By default the pipelines load random
-patients — rerun `python main.py all` to get a different cohort.
+patients — rerun `python main.py all` to get a different cohort, or pass cohort
+filters (e.g. `python main.py all --gender male --service medicine`) to extract a
+targeted subset into `filtered/<slug>/`. See the project README for the full
+list of filter flags.
 
 The patient info bar shows a quick summary:
 
