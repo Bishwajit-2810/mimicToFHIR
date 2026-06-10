@@ -1468,6 +1468,7 @@ const _CHART_LABELS = {
   chartP_topDx:          ['Occurrences',                  null],        // hbar
   chartP_condPerPt:      ['Conditions per Patient',       'Patients'],
   chartP_dxStatus:       ['Diagnosis Status',             'Conditions'],
+  chartP_icdAlpha:       ['ICD Code Initial Letter (A–Z)', 'Occurrences'],
   chartP_labFlags:       ['Flag Type',                   'Lab Results'],
   chartP_labPerPt:       ['Labs per Patient',             'Patients'],
   chartP_abnLabRate:     ['Abnormal Rate Bucket',         'Patients'],
@@ -2433,6 +2434,28 @@ function _renderPopulationCharts(all) {
       borderColor:     keys.map(k =>  pal[k] || "#58a6ff"),
       borderWidth: 1.5, borderRadius: 3,
     }], {});
+  }
+
+  // ICD codes by initial letter (A–Z), split by ICD-9 / ICD-10
+  {
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+    const icd9  = Object.fromEntries(letters.map(l => [l, 0]));
+    const icd10 = Object.fromEntries(letters.map(l => [l, 0]));
+    allConds.forEach(c => {
+      const ch = (c.code || "").trim().charAt(0).toUpperCase();
+      if (!icd9.hasOwnProperty(ch)) return;
+      if      (c.codeSystem === "ICD-9")  icd9[ch]++;
+      else if (c.codeSystem === "ICD-10") icd10[ch]++;
+    });
+    _mkBar("chartP_icdAlpha", letters, [
+      { label: "ICD-9",  data: letters.map(l => icd9[l]),
+        backgroundColor: "#ffa657" + "44", borderColor: "#ffa657", borderWidth: 1.5, borderRadius: 3 },
+      { label: "ICD-10", data: letters.map(l => icd10[l]),
+        backgroundColor: "#58a6ff" + "44", borderColor: "#58a6ff", borderWidth: 1.5, borderRadius: 3 },
+    ], {
+      rotateX: 0,
+      plugins: { legend: { display: true, position: "bottom", labels: { color: "#8b949e", font: { size: 10 }, padding: 8, boxWidth: 12 } } },
+    });
   }
 
   // ── E: Lab Results ───────────────────────────────────────────────────────────
