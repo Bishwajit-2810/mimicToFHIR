@@ -70,9 +70,9 @@ uvicorn web.app:app          --host 0.0.0.0 --port 8095 --reload
 uvicorn web.fhir_blind_app:app --host 0.0.0.0 --port 8096 --reload
 ```
 
-| URL                     | Pipeline | Latest Conditions | Latest Meds | Notes |
-| ----------------------- | -------- | :---------------: | :---------: | :---: |
-| <http://localhost:8095> | FHIR |         ✓         |      ✓      |   ✓   |
+| URL                     | Pipeline       | Latest Conditions | Latest Meds | Notes |
+| ----------------------- | -------------- | :---------------: | :---------: | :---: |
+| <http://localhost:8095> | FHIR           |         ✓         |      ✓      |   ✓   |
 | <http://localhost:8096> | FHIR (Blinded) |         ✗         |      ✗      |   ✗   |
 
 ---
@@ -158,23 +158,23 @@ running `bundle` or `fhir_blind` alone produces just the one it owns.
 There is one flag per dimension shown on the dashboard (demographics + encounter
 details):
 
-| Filter | Matches |
-| --- | --- |
-| `--gender male\|female` | `hosp.patients.gender` (M/F) |
-| `--min-age N` / `--max-age N` | `hosp.patients.anchor_age` (inclusive) |
-| `--anchor-year YYYY` | `hosp.patients.anchor_year` (exact) |
-| `--anchor-year-group TEXT` | `hosp.patients.anchor_year_group` (substring, e.g. `2011`) |
-| `--deceased` | patients with a recorded date of death (`dod IS NOT NULL`) |
-| `--race TEXT` | `hosp.admissions.race` (case-insensitive substring) |
-| `--ethnicity TEXT` | `hosp.admissions.race` (substring, e.g. `hispanic`) |
-| `--language TEXT` | `hosp.admissions.language` (substring) |
-| `--marital-status TEXT` | `hosp.admissions.marital_status` (substring) |
-| `--service CODE\|name` | `hosp.services.curr_service` — code (`MED`) or name (`medicine`) |
-| `--admission-type TEXT` | `hosp.admissions.admission_type` (substring) |
-| `--admit-source TEXT` | `hosp.admissions.admission_location` (substring) |
-| `--discharge-location TEXT` | `hosp.admissions.discharge_location` (substring) |
-| `--insurance TEXT` | `hosp.admissions.insurance` (substring) |
-| `--expired` | patients with an in-hospital death (`hospital_expire_flag = 1`) |
+| Filter                        | Matches                                                          |
+| ----------------------------- | ---------------------------------------------------------------- |
+| `--gender male\|female`       | `hosp.patients.gender` (M/F)                                     |
+| `--min-age N` / `--max-age N` | `hosp.patients.anchor_age` (inclusive)                           |
+| `--anchor-year YYYY`          | `hosp.patients.anchor_year` (exact)                              |
+| `--anchor-year-group TEXT`    | `hosp.patients.anchor_year_group` (substring, e.g. `2011`)       |
+| `--deceased`                  | patients with a recorded date of death (`dod IS NOT NULL`)       |
+| `--race TEXT`                 | `hosp.admissions.race` (case-insensitive substring)              |
+| `--ethnicity TEXT`            | `hosp.admissions.race` (substring, e.g. `hispanic`)              |
+| `--language TEXT`             | `hosp.admissions.language` (substring)                           |
+| `--marital-status TEXT`       | `hosp.admissions.marital_status` (substring)                     |
+| `--service CODE\|name`        | `hosp.services.curr_service` — code (`MED`) or name (`medicine`) |
+| `--admission-type TEXT`       | `hosp.admissions.admission_type` (substring)                     |
+| `--admit-source TEXT`         | `hosp.admissions.admission_location` (substring)                 |
+| `--discharge-location TEXT`   | `hosp.admissions.discharge_location` (substring)                 |
+| `--insurance TEXT`            | `hosp.admissions.insurance` (substring)                          |
+| `--expired`                   | patients with an in-hospital death (`hospital_expire_flag = 1`)  |
 
 Service codes: `CMED` (Cardiac Medicine), `CSURG` (Cardiac Surgery), `DENT`,
 `ENT`, `EYE` (Ophthalmology), `GU`, `GYN`, `MED` (Medicine), `NB`/`NBB`
@@ -253,13 +253,13 @@ uvicorn web.fhir_blind_app:app --host 0.0.0.0 --port 8096 --reload
 | `MIMIC_DSN`      | `host=localhost port=5433 dbname=mimiciv user=mimic password=mimic` |
 | `MIMIC_DATA_DIR` | `dataset/`                                                          |
 | `MIMIC_NOTE_DIR` | `dataset/note/`                                                     |
-| `FHIR_BLIND_OUT`   | `fhir_blind_bundles`                                             |
+| `FHIR_BLIND_OUT` | `fhir_blind_bundles`                                                |
 
 ---
 
 ## What Each Bundle Contains
 
-| Resource type                    | Source                  | FHIR | FHIR (Blinded) |
+| Resource type                    | Source                  | FHIR |   FHIR (Blinded)   |
 | -------------------------------- | ----------------------- | :--: | :----------------: |
 | `Patient`                        | hosp.patients           |  ✓   |         ✓          |
 | `Encounter` (hospital)           | hosp.admissions         |  ✓   |         ✓          |

@@ -157,6 +157,7 @@ function render(d) {
   renderEncounters(d.encounters);
   renderNotes(d.notes || []);
   renderAnalytics(d);
+  renderICDReport(d);
 }
 
 // ── Info bar ──────────────────────────────────────────────────────────────────
@@ -3034,4 +3035,328 @@ function _renderPopulationCharts(all) {
 
   // Inject download buttons into population chart cards
   setTimeout(_injectDownloadBtns, 0);
+}
+
+// ── ICD & Diagnosis Analysis Report ──────────────────────────────────────────
+
+function renderICDReport(d) {
+  const encounters = d.encounters || [];
+  const allConds   = d.conditions || [];
+
+  // Clear old ICD charts
+  ["chartJ_icdSys", "chartJ_dxPerEnc", "chartJ_coverage", "chartJ_topDx"].forEach(id => _destroyChart(id));
+
+  const container  = $("icdEncounterCards");
+  const emptyEl    = $("icdEmpty");
+  const badgeEl    = $("icdTotalBadge");
+  const chipsEl    = $("icdSummaryChips");
+
+  if (!encounters.length) {
+    container.innerHTML = "";
+    emptyEl.classList.remove("hidden");
+    return;
+  }
+  emptyEl.classList.add("hidden");
+
+  // ── Compute note coverage globally ──────────────────────────────────────────
+  function _noteExcerpt(text, keyword, radius) {
+    if (!text || !keyword) return "";
+    const hay = text.toLowerCase();
+    const idx = hay.indexOf(keyword.toLowerCase());
+    if (idx < 0) return "";
+    const s = Math.max(0, idx - radius);
+    const e = Math.min(text.length, idx + keyword.length + radius);
+    return (s > 0 ? "…" : "") + text.slice(s, e).trim() + (e < text.length ? "…" : "");
+  }
+
+  // Generic clinical stopwords to skip when matching diagnosis names to note text
+  const _DX_STOPWORDS = new Set([
+    "other","unspecified","specified","without","mention","personal","history",
+    "disorder","condition","disease","syndrome","chronic","acute","primary",
+    "secondary","multiple","single","bilateral","unilateral","benign","malignant",
+    "encounter","hazards","presenting","elsewhere","classified","initial","subsequent",
+    "sequela","adverse","effect","poisoning","assault","undetermined","intentional",
+    "postoperative","operation","surgical","external","internal","complication",
+    "following","procedure","status","presenting","visit","evaluation","management",
+  ]);
+
+  function _diagInNote(diag, noteText) {
+    if (!noteText) return { found: false, keyword: null };
+    const hay = noteText.toLowerCase();
+    // 1. Try exact ICD code match
+    if (diag.code && hay.includes(diag.code.toLowerCase())) {
+      return { found: true, keyword: diag.code };
+    }
+    // 2. Try significant words from diagnosis name — sorted longest-first, skip stopwords
+    const words = diag.name
+      .replace(/[(),\/]/g, " ")
+      .split(/\s+/)
+      .map(w => w.toLowerCase().replace(/[^a-z]/g, ""))
+      .filter(w => w.length >= 4 && !_DX_STOPWORDS.has(w));
+    words.sort((a, b) => b.length - a.length);  // try longest (most specific) first
+    for (const w of words) {
+      if (hay.includes(w)) return { found: true, keyword: w };
+    }
+    // 3. Try word stem (first 5 chars) for clinical terms ≥8 chars
+    for (const w of words.filter(w => w.length >= 8)) {
+      const stem = w.slice(0, 6);
+      if (hay.includes(stem)) return { found: true, keyword: stem };
+    }
+    return { found: false, keyword: null };
+  }
+
+  // Build per-encounter coverage stats
+  const encStats = [];
+  let totalDx = 0, totalCovered = 0;
+
+  encounters.forEach((enc, idx) => {
+    const ed    = enc.encounterData || {};
+    const conds = ed.conditions || [];
+    const notes = ed.notes || [];
+    const allNoteText = notes.map(n => n.text || "").join("\n");
+
+    const diagRows = conds.map(c => {
+      let found = false, keyword = null, noteSnippet = "", noteRef = "";
+      for (const note of notes) {
+        const r = _diagInNote(c, note.text || "");
+        if (r.found) {
+          found       = true;
+          keyword     = r.keyword;
+          noteSnippet = _noteExcerpt(note.text, keyword, 80);
+          noteRef     = note.typeDisplay || "Note";
+          break;
+        }
+      }
+      // Fallback: search all notes combined
+      if (!found) {
+        const r = _diagInNote(c, allNoteText);
+        if (r.found) {
+          found   = true;
+          keyword = r.keyword;
+          noteRef = "Combined notes";
+          noteSnippet = _noteExcerpt(allNoteText, keyword, 80);
+        }
+      }
+      return { ...c, found, keyword, noteSnippet, noteRef };
+    });
+
+    const covered = diagRows.filter(r => r.found).length;
+    totalDx      += conds.length;
+    totalCovered += covered;
+
+    encStats.push({
+      enc,
+      idx,
+      diagRows,
+      covered,
+      total: conds.length,
+      notes,
+    });
+  });
+
+  const coveragePct = totalDx > 0 ? Math.round((totalCovered / totalDx) * 100) : 0;
+  const totalICD10  = allConds.filter(c => c.codeSystem === "ICD-10").length;
+  const totalICD9   = allConds.filter(c => c.codeSystem === "ICD-9").length;
+
+  // ── Summary badge + chips ───────────────────────────────────────────────────
+  badgeEl.textContent = `${encounters.length} encounter${encounters.length !== 1 ? "s" : ""} · ${totalDx} diagnoses`;
+
+  chipsEl.innerHTML = [
+    ["fa-stethoscope",   "#fb7185", totalDx,         "Total Diagnoses"],
+    ["fa-code-branch",   "#818cf8", totalICD10,       "ICD-10 Codes"],
+    ["fa-code",          "#fbbf24", totalICD9,        "ICD-9 Codes"],
+    ["fa-file-medical",  "#34d399", totalCovered,     "Found in Notes"],
+    ["fa-percent",       "#38bdf8", coveragePct + "%","Note Coverage"],
+  ].map(([icon, color, val, label]) => `
+    <span class="enc-stat-chip">
+      <i class="fas ${icon}" style="color:${color};"></i>
+      <strong>${esc(String(val))}</strong> <span style="color:#8b949e;">${label}</span>
+    </span>`).join("");
+
+  // ── Overview charts ─────────────────────────────────────────────────────────
+
+  // ICD system donut
+  {
+    const sys10 = allConds.filter(c => c.codeSystem === "ICD-10").length;
+    const sys9  = allConds.filter(c => c.codeSystem === "ICD-9").length;
+    const other = allConds.length - sys10 - sys9;
+    const labels = [], data = [], colors = [];
+    if (sys10) { labels.push("ICD-10"); data.push(sys10); colors.push("#818cf8"); }
+    if (sys9)  { labels.push("ICD-9");  data.push(sys9);  colors.push("#fbbf24"); }
+    if (other) { labels.push("Other");  data.push(other); colors.push("#484f58"); }
+    if (data.length) {
+      _mkDonut("chartJ_icdSys", labels, data, colors);
+    }
+  }
+
+  // Diagnoses per encounter bar
+  {
+    const labels = encStats.map((s, i) => `#${i + 1}  ${(s.enc.start || "").slice(0, 10)}`);
+    const data   = encStats.map(s => s.total);
+    _mkBar("chartJ_dxPerEnc", labels, [{
+      data,
+      backgroundColor: "#fb718544",
+      borderColor:     "#fb7185",
+      borderWidth: 1.5, borderRadius: 3,
+    }], {
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.raw} diagnos${c.raw !== 1 ? "es" : "is"}` } } },
+    });
+  }
+
+  // Note coverage rate per encounter
+  {
+    const labels = encStats.map((s, i) => `#${i + 1}`);
+    const data   = encStats.map(s => s.total > 0 ? Math.round((s.covered / s.total) * 100) : 0);
+    const colors = data.map(v => v >= 70 ? "#34d399" : v >= 40 ? "#fbbf24" : "#f85149");
+    _mkBar("chartJ_coverage", labels, [{
+      data,
+      backgroundColor: colors.map(c => c + "44"),
+      borderColor:     colors,
+      borderWidth: 1.5, borderRadius: 3,
+    }], {
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => ` ${c.raw}% covered` } },
+      },
+      scales: { y: { max: 100, ticks: { callback: v => v + "%" } } },
+    });
+  }
+
+  // Top diagnoses frequency
+  {
+    const freq = {};
+    allConds.forEach(c => { freq[c.name] = (freq[c.name] || 0) + 1; });
+    const entries = _top(freq, 20);
+    if (entries.length) {
+      const H = Math.max(240, entries.length * 22 + 40);
+      // Resize canvas container dynamically
+      const canvasParent = $("chartJ_topDx")?.parentElement;
+      if (canvasParent) canvasParent.style.height = H + "px";
+      _mkHBar("chartJ_topDx", entries.map(e => e[0]), entries.map(e => e[1]), "#d2a8ff");
+    }
+  }
+
+  // ── Per-encounter cards ─────────────────────────────────────────────────────
+  container.innerHTML = encStats.map(({ enc, idx, diagRows, covered, total, notes }) => {
+    const cls      = enc.cls === "IMP" ? "Inpatient" : (enc.cls === "ACUTE" ? "ICU" : enc.cls || enc.type || "Encounter");
+    const covPct   = total > 0 ? Math.round((covered / total) * 100) : 0;
+    const covColor = covPct >= 70 ? "#34d399" : covPct >= 40 ? "#fbbf24" : "#f85149";
+    const covLabel = covPct >= 70 ? "Good" : covPct >= 40 ? "Partial" : (total > 0 ? "Low" : "—");
+
+    // ICD table rows
+    const tableRows = diagRows.length ? diagRows.map((c, ri) => {
+      const sysColor  = c.codeSystem === "ICD-10" ? "#818cf8" : c.codeSystem === "ICD-9" ? "#fbbf24" : "#484f58";
+      const statusCls = c.status === "active" ? "badge-rose" : "badge-inactive";
+      const noteId    = `icdNote_${idx}_${ri}`;
+      return `
+        <tr class="icd-dx-row">
+          <td class="icd-td-num">${ri + 1}</td>
+          <td class="icd-td-sys">
+            ${c.codeSystem
+              ? `<span class="icd-sys-badge" style="color:${sysColor};border-color:${sysColor}33;">${esc(c.codeSystem)}</span>`
+              : `<span class="icd-sys-badge" style="color:#484f58;">—</span>`}
+          </td>
+          <td class="icd-td-code">
+            ${c.code ? `<code class="icd-code-chip">${esc(c.code)}</code>` : `<span style="color:#484f58;">—</span>`}
+          </td>
+          <td class="icd-td-name">${esc(c.name)}</td>
+          <td class="icd-td-status"><span class="${statusCls}">${esc(c.status || "—")}</span></td>
+          <td class="icd-td-note">
+            ${c.found
+              ? `<span class="icd-note-found" onclick="_toggleIcdNote('${noteId}')">
+                   <i class="fas fa-check-circle" style="color:#34d399;"></i> Found
+                   <i class="fas fa-chevron-down" style="font-size:0.6rem;margin-left:0.2rem;"></i>
+                 </span>
+                 <div id="${noteId}" class="icd-note-snippet hidden">
+                   <span class="icd-note-src"><i class="fas fa-file-medical" style="color:#58a6ff;font-size:0.65rem;"></i> ${esc(c.noteRef)}</span>
+                   <p class="icd-note-text">${esc(c.noteSnippet)}</p>
+                 </div>`
+              : `<span class="icd-note-absent"><i class="fas fa-minus-circle" style="color:#484f58;"></i> Not found</span>`}
+          </td>
+        </tr>`;
+    }).join("") : `
+        <tr>
+          <td colspan="6" class="icd-td-empty">No diagnoses recorded for this encounter</td>
+        </tr>`;
+
+    // Notes summary for this encounter
+    const notesSummary = notes.length
+      ? notes.map(n => `
+          <span class="icd-note-chip">
+            <i class="fas fa-file-medical" style="color:#58a6ff;font-size:0.65rem;"></i>
+            ${esc(n.typeDisplay || "Note")}
+            ${n.date ? `<span style="color:#484f58;">· ${n.date}</span>` : ""}
+          </span>`).join("")
+      : `<span style="color:#484f58;font-size:0.8rem;">No clinical notes attached</span>`;
+
+    return `
+    <div class="icd-enc-card">
+      <!-- Card header -->
+      <div class="icd-enc-header" onclick="this.parentElement.querySelector('.icd-enc-body').classList.toggle('hidden'); this.querySelector('.icd-enc-chevron').classList.toggle('rotate-180')">
+        <div class="badge-num-blue">${idx + 1}</div>
+        <div class="min-w-0 flex-1">
+          <p class="font-semibold" style="color:#cdd9e5;line-height:1.4;">
+            ${esc(enc.type || cls)} Encounter
+            ${total > 0 ? `<span class="enc-items-chip">${total} diagnosis${total !== 1 ? "es" : ""}</span>` : ""}
+          </p>
+          <p style="font-size:0.8125rem;color:#6e7681;margin-top:0.15rem;">
+            <i class="fas fa-calendar-range" style="font-size:0.7rem;margin-right:0.3rem;"></i>
+            ${enc.start || "?"} &nbsp;→&nbsp; ${enc.end || "ongoing"}
+            ${enc.los != null ? `<span style="margin-left:0.75rem;color:#484f58;">LOS: ${enc.los}d</span>` : ""}
+          </p>
+        </div>
+        <div class="shrink-0 flex flex-col items-end gap-1.5">
+          <span class="icd-coverage-badge" style="color:${covColor};border-color:${covColor}33;background:${covColor}12;">
+            <i class="fas fa-file-medical" style="font-size:0.65rem;"></i>
+            ${covPct}% note coverage &nbsp;<span style="color:#484f58;">(${covLabel})</span>
+          </span>
+          <span class="badge-type-indigo">${esc(cls)}</span>
+        </div>
+        <i class="fas fa-chevron-down icd-enc-chevron text-sm ml-3 shrink-0 transition-transform duration-200"></i>
+      </div>
+
+      <!-- Card body (collapsed by default) -->
+      <div class="icd-enc-body hidden">
+
+        <!-- Clinical notes attached -->
+        <div class="icd-notes-bar">
+          <span style="color:#6e7681;font-size:0.8rem;font-weight:600;"><i class="fas fa-file-medical" style="color:#58a6ff;margin-right:0.3rem;"></i>Notes attached:</span>
+          ${notesSummary}
+        </div>
+
+        <!-- ICD / Diagnosis table -->
+        <div class="icd-table-wrap">
+          <table class="icd-table">
+            <thead>
+              <tr>
+                <th class="icd-th">#</th>
+                <th class="icd-th">System</th>
+                <th class="icd-th">Code</th>
+                <th class="icd-th" style="min-width:200px;">Diagnosis</th>
+                <th class="icd-th">Status</th>
+                <th class="icd-th">In Notes?</th>
+              </tr>
+            </thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+        </div>
+
+        <!-- Coverage summary row -->
+        ${total > 0 ? `
+        <div class="icd-coverage-row">
+          <div class="icd-coverage-bar-wrap">
+            <div class="icd-coverage-bar-fill" style="width:${covPct}%;background:${covColor};"></div>
+          </div>
+          <span style="font-size:0.8rem;color:${covColor};font-weight:600;min-width:2.5rem;">${covPct}%</span>
+          <span style="font-size:0.8rem;color:#6e7681;">${covered} of ${total} diagnoses found in clinical notes</span>
+        </div>` : ""}
+
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function _toggleIcdNote(id) {
+  const el = $(id);
+  if (el) el.classList.toggle("hidden");
 }

@@ -1454,3 +1454,195 @@ body {
 }
 
 /* Population section title (reuses .analytics-section-title) */
+
+/* ── ICD Analysis Report ─────────────────────────────────────────────────── */
+
+/* Encounter card */
+.icd-enc-card {
+  background: rgba(22, 27, 34, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0.875rem;
+  overflow: hidden;
+}
+
+.icd-enc-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.875rem 1.125rem;
+  cursor: pointer;
+  transition: background 150ms;
+}
+.icd-enc-header:hover { background: rgba(255, 255, 255, 0.03); }
+
+.icd-enc-body { padding: 0 1.125rem 1.125rem; }
+
+.icd-enc-chevron { color: #484f58; transition: transform 200ms; }
+
+/* Notes bar (attached notes chips) */
+.icd-notes-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  background: rgba(88, 166, 255, 0.04);
+  border: 1px solid rgba(88, 166, 255, 0.12);
+  border-radius: 0.5rem;
+  margin-bottom: 0.875rem;
+}
+.icd-note-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  color: #8b949e;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.375rem;
+  padding: 0.2rem 0.5rem;
+}
+
+/* ICD table */
+.icd-table-wrap {
+  overflow-x: auto;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  margin-bottom: 0.75rem;
+}
+.icd-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+.icd-th {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #484f58;
+  background: rgba(33, 38, 45, 0.9);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  white-space: nowrap;
+}
+.icd-dx-row {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  transition: background 120ms;
+}
+.icd-dx-row:hover { background: rgba(255, 255, 255, 0.025); }
+.icd-dx-row:last-child { border-bottom: none; }
+
+.icd-td-num   { padding: 0.55rem 0.75rem; color: #484f58; font-size: 0.75rem; white-space: nowrap; }
+.icd-td-sys   { padding: 0.55rem 0.75rem; white-space: nowrap; }
+.icd-td-code  { padding: 0.55rem 0.75rem; white-space: nowrap; }
+.icd-td-name  { padding: 0.55rem 0.75rem; color: #cdd9e5; }
+.icd-td-status{ padding: 0.55rem 0.75rem; white-space: nowrap; }
+.icd-td-note  { padding: 0.55rem 0.75rem; }
+.icd-td-empty {
+  padding: 1rem;
+  text-align: center;
+  color: #484f58;
+  font-size: 0.8rem;
+}
+
+/* ICD code system badge */
+.icd-sys-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.3rem;
+  border: 1px solid;
+  letter-spacing: 0.03em;
+}
+
+/* ICD code chip (monospace pill) */
+.icd-code-chip {
+  display: inline-block;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.75rem;
+  color: #79c0ff;
+  background: rgba(121, 192, 255, 0.08);
+  border: 1px solid rgba(121, 192, 255, 0.18);
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.3rem;
+  white-space: nowrap;
+}
+
+/* Note found / not-found indicators */
+.icd-note-found {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  color: #34d399;
+  cursor: pointer;
+  user-select: none;
+}
+.icd-note-found:hover { text-decoration: underline; }
+
+.icd-note-absent {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  color: #484f58;
+}
+
+/* Note snippet */
+.icd-note-snippet {
+  margin-top: 0.4rem;
+  padding: 0.5rem 0.625rem;
+  background: rgba(52, 211, 153, 0.05);
+  border-left: 2px solid rgba(52, 211, 153, 0.35);
+  border-radius: 0 0.375rem 0.375rem 0;
+}
+.icd-note-src {
+  display: block;
+  font-size: 0.68rem;
+  color: #8b949e;
+  margin-bottom: 0.25rem;
+}
+.icd-note-text {
+  font-size: 0.78rem;
+  color: #8b949e;
+  line-height: 1.55;
+  font-style: italic;
+  margin: 0;
+}
+
+/* Coverage progress bar */
+.icd-coverage-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.25rem;
+}
+.icd-coverage-bar-wrap {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.icd-coverage-bar-fill {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 600ms ease;
+}
+
+/* Coverage badge in header */
+.icd-coverage-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.35rem;
+  border: 1px solid;
+  white-space: nowrap;
+}
+

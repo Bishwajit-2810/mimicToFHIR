@@ -126,6 +126,10 @@
             <i class="fas fa-chart-column mr-2"></i
             ><span class="tab-label">Analytics</span>
           </button>
+          <button class="tab-btn" data-tab="icd">
+            <i class="fas fa-code-branch mr-2"></i
+            ><span class="tab-label">ICD Report</span>
+          </button>
         </nav>
       </div>
     </div>
@@ -954,6 +958,79 @@
       </div>
       <!-- /tab-analytics -->
 
+      <!-- ─────────────── TAB 7: ICD ANALYSIS REPORT ─────────────────────── -->
+      <div id="tab-icd" class="tab-pane hidden space-y-5">
+
+        <!-- Summary header + stats chips -->
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-1">
+          <h2 class="text-base sm:text-lg font-semibold text-white flex items-center gap-2">
+            <i class="fas fa-code-branch text-violet-400"></i>ICD &amp; Diagnosis Report
+            <span id="icdTotalBadge"
+              class="text-xs text-gray-400 bg-gray-800/80 border border-gray-700 px-3 py-1 rounded-full"></span>
+          </h2>
+        </div>
+
+        <!-- Summary stat chips row -->
+        <div id="icdSummaryChips" class="flex flex-wrap gap-2 mb-2"></div>
+
+        <!-- Overview charts (ICD system donut + top diagnoses) -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-2">
+          <section class="card">
+            <div class="card-header" style="background:linear-gradient(135deg,#1c1917 0%,#44403c 100%);">
+              <div class="header-icon-wrap"><i class="fas fa-code-branch"></i></div>
+              <span>ICD Code System</span>
+            </div>
+            <div class="p-4" style="height:200px;position:relative;">
+              <canvas id="chartJ_icdSys"></canvas>
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-header" style="background:linear-gradient(135deg,#4c0519 0%,#881337 100%);">
+              <div class="header-icon-wrap"><i class="fas fa-chart-bar"></i></div>
+              <span>Diagnoses per Encounter</span>
+            </div>
+            <div class="p-4" style="height:200px;position:relative;">
+              <canvas id="chartJ_dxPerEnc"></canvas>
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-header" style="background:linear-gradient(135deg,#064e3b 0%,#065f46 100%);">
+              <div class="header-icon-wrap"><i class="fas fa-file-medical"></i></div>
+              <span>Note Coverage Rate</span>
+              <span class="ml-auto text-emerald-200/60 text-xs font-normal">% diagnoses in notes</span>
+            </div>
+            <div class="p-4" style="height:200px;position:relative;">
+              <canvas id="chartJ_coverage"></canvas>
+            </div>
+          </section>
+        </div>
+
+        <!-- Top diagnoses bar (full width) -->
+        <section class="card mb-2">
+          <div class="card-header" style="background:linear-gradient(135deg,#3b0764 0%,#6d28d9 100%);">
+            <div class="header-icon-wrap"><i class="fas fa-list-ol"></i></div>
+            <span>All Diagnoses — Frequency</span>
+            <span class="ml-auto text-violet-200/60 text-xs font-normal">sorted by count</span>
+          </div>
+          <div class="p-4" style="height:300px;position:relative;">
+            <canvas id="chartJ_topDx"></canvas>
+          </div>
+        </section>
+
+        <!-- Per-encounter ICD report cards -->
+        <div class="flex items-center justify-between mb-1">
+          <h2 class="text-base font-semibold text-white flex items-center gap-2">
+            <i class="fas fa-list-check text-blue-400"></i>Per-Encounter ICD Detail
+          </h2>
+        </div>
+        <div id="icdEncounterCards" class="space-y-4"></div>
+        <div id="icdEmpty" class="hidden p-10 text-center text-gray-500 text-sm">
+          No encounter records found.
+        </div>
+
+      </div>
+      <!-- /tab-icd -->
+
     </main>
     <!-- /dashboard -->
 
@@ -1557,6 +1634,6 @@
     </div>
     <!-- /populationPanel -->
 
-    <script src="/static/app.js?v=9"></script>
+    <script src="/static/app.js?v=10"></script>
   </body>
 </html>
