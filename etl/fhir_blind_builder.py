@@ -31,9 +31,10 @@ Builders provided:
 BLINDING RULE (applied in fhir_blind_gen.py, not here):
   Condition, Procedure, MedicationRequest, MedicationStatement, MedicationDispense,
   MedicationAdministration (inputevents, ingredientevents), and
-  DocumentReference are excluded for the latest hospital encounter (latest_hadm)
-  and latest ED stay (latest_ed_stay). All prior encounters have full data.
-  Testing variant (include_notes=True) adds back latest-encounter notes.
+  DocumentReference are excluded for the blinding pivot — the latest admission
+  with a discharge note — and every encounter at/after it (hospital and ED).
+  All prior encounters have full data. Testing variant (include_notes=True)
+  adds back the blinded range's notes.
 
 Called exclusively by fhir_blind_gen.py.
 """
