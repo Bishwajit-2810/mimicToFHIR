@@ -5,40 +5,40 @@ import re
 from datetime import datetime
 
 VITAL_LOINC = {
-    "8867-4":  "Heart Rate",
-    "8480-6":  "Systolic BP",
-    "8462-4":  "Diastolic BP",
-    "8478-0":  "Mean BP",
-    "9279-1":  "Respiratory Rate",
-    "8310-5":  "Temperature",
+    "8867-4": "Heart Rate",
+    "8480-6": "Systolic BP",
+    "8462-4": "Diastolic BP",
+    "8478-0": "Mean BP",
+    "9279-1": "Respiratory Rate",
+    "8310-5": "Temperature",
     "59408-5": "SpO2",
-    "2708-6":  "SpO2",       # MIMIC chartevents item 220277 emits this code
+    "2708-6": "SpO2",  # MIMIC chartevents item 220277 emits this code
     "29463-7": "Weight",
-    "8302-2":  "Height",
+    "8302-2": "Height",
 }
 
 VITAL_ICONS = {
-    "Heart Rate":       "fa-heart-pulse",
-    "Systolic BP":      "fa-gauge-high",
-    "Diastolic BP":     "fa-gauge",
-    "Mean BP":          "fa-gauge",
+    "Heart Rate": "fa-heart-pulse",
+    "Systolic BP": "fa-gauge-high",
+    "Diastolic BP": "fa-gauge",
+    "Mean BP": "fa-gauge",
     "Respiratory Rate": "fa-lungs",
-    "Temperature":      "fa-thermometer-half",
-    "SpO2":             "fa-percent",
-    "Weight":           "fa-weight-scale",
-    "Height":           "fa-ruler-vertical",
+    "Temperature": "fa-thermometer-half",
+    "SpO2": "fa-percent",
+    "Weight": "fa-weight-scale",
+    "Height": "fa-ruler-vertical",
 }
 
 VITAL_NORMAL = {
-    "Heart Rate":       (60, 100),
-    "Systolic BP":      (90, 140),
-    "Diastolic BP":     (60, 90),
-    "Mean BP":          (70, 100),
+    "Heart Rate": (60, 100),
+    "Systolic BP": (90, 140),
+    "Diastolic BP": (60, 90),
+    "Mean BP": (70, 100),
     "Respiratory Rate": (12, 20),
-    "Temperature":      (97.0, 99.5),
-    "SpO2":             (95, 100),
-    "Weight":           None,
-    "Height":           None,
+    "Temperature": (97.0, 99.5),
+    "SpO2": (95, 100),
+    "Weight": None,
+    "Height": None,
 }
 
 
@@ -196,6 +196,29 @@ def _vitals_by_encounter(obs_list: list) -> dict[str, list]:
     return groups
 
 
+def _chief_complaints_by_encounter(obs_list: list) -> dict[str, str]:
+    """Map encounter ref → presenting chief complaint, from preserved ED triage
+    "Chief complaint" Observations (LOINC 10154-3).
+
+    These survive blinding (triage vitals/complaint are always included), so they
+    let the blind dashboard still show why the patient presented even though the
+    diagnosis Condition is removed. First complaint per encounter wins.
+    """
+    groups: dict[str, str] = {}
+    for obs in obs_list:
+        code = obs.get("code", {})
+        is_cc = code.get("text") == "Chief complaint" or any(
+            cd.get("code") == "10154-3" for cd in code.get("coding", [])
+        )
+        if not is_cc:
+            continue
+        complaint = obs.get("valueString")
+        enc_ref = obs.get("encounter", {}).get("reference", "")
+        if complaint and enc_ref and enc_ref not in groups:
+            groups[enc_ref] = complaint
+    return groups
+
+
 def _parse_lab_obs(obs: dict) -> dict | None:
     name = concept_text(obs.get("code", {}))
     if not name:
@@ -325,8 +348,12 @@ def _encounters(encs: list) -> list:
         locs = e.get("location", [])
         hosp_info = e.get("hospitalization", {})
         exts = {x.get("url"): x for x in e.get("extension", [])}
-        ins = exts.get("http://mimic.mit.edu/fhir/StructureDefinition/insurance", {}).get("valueString", "")
-        los = exts.get("http://mimic.mit.edu/fhir/StructureDefinition/los", {}).get("valueDecimal")
+        ins = exts.get(
+            "http://mimic.mit.edu/fhir/StructureDefinition/insurance", {}
+        ).get("valueString", "")
+        los = exts.get("http://mimic.mit.edu/fhir/StructureDefinition/los", {}).get(
+            "valueDecimal"
+        )
 
         svc = e.get("serviceType", {})
         svc_codings = svc.get("coding", []) if svc else []
@@ -453,13 +480,15 @@ def _notes(doc_refs: list) -> list:
         type_obj = doc.get("type", {})
         codings = type_obj.get("coding", [])
         loinc_code = next(
-            (c.get("code", "") for c in codings if "loinc" in c.get("system", "").lower()),
+            (
+                c.get("code", "")
+                for c in codings
+                if "loinc" in c.get("system", "").lower()
+            ),
             "",
         )
         type_display = (
-            _NOTE_LOINC_LABEL.get(loinc_code)
-            or concept_text(type_obj)
-            or "Note"
+            _NOTE_LOINC_LABEL.get(loinc_code) or concept_text(type_obj) or "Note"
         )
         category = _NOTE_CATEGORY.get(loinc_code, "other")
 
@@ -558,6 +587,18 @@ def parse_bundle(bundle: dict) -> dict:
     prac_lookup = _practitioners(resources["Practitioner"])
     vitals_by_enc = _vitals_by_encounter(resources["ObsVital"])
     labs_by_enc = _labs_by_encounter(resources["ObsLab"])
+    cc_by_enc = _chief_complaints_by_encounter(resources["ObsOther"])
+
+    def _chief_for(enc: dict) -> str | None:
+        """Presenting complaint for an encounter: its own or a child's triage
+        complaint (preserved under blinding), else the first diagnosis name."""
+        refs = [enc["id"]] + [c["id"] for c in enc.get("children", [])]
+        for ref in refs:
+            if ref in cc_by_enc:
+                return cc_by_enc[ref]
+        own_conds = [c for c in conds if c.get("encounterRef") == enc["id"]]
+        return own_conds[0]["name"] if own_conds else None
+
     notes_by_enc: dict[str, list] = {}
     for n in notes:
         notes_by_enc.setdefault(n["encounterRef"], []).append(n)
@@ -579,7 +620,7 @@ def parse_bundle(bundle: dict) -> dict:
         enc_labs = labs_by_enc.get(eid, [])
         enc_notes = notes_by_enc.get(eid, [])
 
-        chief_complaint = enc_conds[0]["name"] if enc_conds else None
+        chief_complaint = _chief_for(enc)
 
         providers = [
             prac_lookup[ref]
@@ -600,14 +641,8 @@ def parse_bundle(bundle: dict) -> dict:
         }
 
     chief = "Not recorded"
-    if encs and conds:
-        recent_id = encs[0]["id"]
-        primary = next(
-            (c for c in conds if c["encounterRef"] == recent_id),
-            None,
-        )
-        if primary:
-            chief = primary["name"]
+    if encs:
+        chief = _chief_for(encs[0]) or chief
 
     return {
         "demographics": demo,

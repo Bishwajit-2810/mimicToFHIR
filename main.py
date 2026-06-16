@@ -14,6 +14,7 @@ from pathlib import Path
 
 def cmd_load(args):
     from etl.load_mimic import main as load_main
+
     only = [t.strip() for t in args.tables.split(",")] if args.tables else None
     load_main(
         data_dir=Path(args.data_dir) if args.data_dir else None,
@@ -27,6 +28,7 @@ def cmd_reindex(args):
     import os
     import psycopg2
     from etl.load_mimic import DSN as _DSN
+
     dsn = args.dsn or os.getenv("MIMIC_DSN") or _DSN
     sql_path = Path(__file__).parent / "sql" / "02_indexes.sql"
     sql = sql_path.read_text()
@@ -34,7 +36,11 @@ def cmd_reindex(args):
     conn = psycopg2.connect(dsn)
     conn.autocommit = True
     cur = conn.cursor()
-    for stmt in [s.strip() for s in sql.split(";") if s.strip() and not s.strip().startswith("--")]:
+    for stmt in [
+        s.strip()
+        for s in sql.split(";")
+        if s.strip() and not s.strip().startswith("--")
+    ]:
         idx_name = stmt.split("idx_")[1].split(" ")[0] if "idx_" in stmt else "?"
         print(f"  {idx_name} ...", end=" ", flush=True)
         cur.execute(stmt)
@@ -46,7 +52,10 @@ def cmd_reindex(args):
 
 def cmd_convert(args):
     from etl.mimic_to_fhir import convert, DSN, OUTPUT_DIR
-    convert(dsn=args.dsn or DSN, output_dir=Path(args.output) if args.output else OUTPUT_DIR)
+
+    convert(
+        dsn=args.dsn or DSN, output_dir=Path(args.output) if args.output else OUTPUT_DIR
+    )
 
 
 def _resolve_filtered_sids(args, dsn):
@@ -64,7 +73,8 @@ def _resolve_filtered_sids(args, dsn):
     conn.set_session(readonly=True, autocommit=True)
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     sids = select_subject_ids(
-        cur, filters,
+        cur,
+        filters,
         random_sample=getattr(args, "random", True),
         limit=args.limit,
         offset=getattr(args, "offset", 0),
@@ -134,18 +144,29 @@ def cmd_fhir_blind(args):
     )
 
 
-
 def cmd_all(args):
     """Run both pipelines on the same randomly selected patients."""
     import psycopg2
     import psycopg2.extras
-    from etl.mimic_to_bundle import convert as bundle_convert, DSN, OUTPUT_DIR as BUNDLE_OUT
-    from etl.fhir_blind_gen import convert as fhir_blind_convert, OUTPUT_DIR as FHIR_BLIND_OUT
-    from etl.filters import extract_filters, select_subject_ids, slug_for, default_output_base
+    from etl.mimic_to_bundle import (
+        convert as bundle_convert,
+        DSN,
+        OUTPUT_DIR as BUNDLE_OUT,
+    )
+    from etl.fhir_blind_gen import (
+        convert as fhir_blind_convert,
+        OUTPUT_DIR as FHIR_BLIND_OUT,
+    )
+    from etl.filters import (
+        extract_filters,
+        select_subject_ids,
+        slug_for,
+        default_output_base,
+    )
 
     dsn = args.dsn or DSN
     filters = extract_filters(args)
-    limit = args.limit if args.limit is not None else 10000
+    limit = args.limit if args.limit is not None else 50
 
     if args.subject_ids:
         sids = [int(s.strip()) for s in args.subject_ids.split(",")]
@@ -155,11 +176,16 @@ def cmd_all(args):
         conn.set_session(readonly=True, autocommit=True)
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         if filters:
-            print(f"Selecting up to {limit} random patients matching cohort '{slug_for(filters)}'...")
+            print(
+                f"Selecting up to {limit} random patients matching cohort '{slug_for(filters)}'..."
+            )
             sids = select_subject_ids(cur, filters, random_sample=True, limit=limit)
         else:
             print(f"Selecting {limit} random patients from database...")
-            cur.execute("SELECT subject_id FROM hosp.patients ORDER BY RANDOM() LIMIT %s", (limit,))
+            cur.execute(
+                "SELECT subject_id FROM hosp.patients ORDER BY RANDOM() LIMIT %s",
+                (limit,),
+            )
             sids = [r["subject_id"] for r in cur.fetchall()]
         cur.close()
         conn.close()
@@ -172,6 +198,7 @@ def cmd_all(args):
     # Filtered extracts go to filtered/<slug>/{fhir,fhir_blind}/; otherwise
     # top-level dirs (legacy). An explicit --output keeps the legacy subfolder names.
     from etl.filters import FHIR_SUBDIR, FHIR_BLIND_SUBDIR
+
     if args.output:
         base = Path(args.output)
     elif filters:
@@ -205,18 +232,35 @@ def cmd_all(args):
     )
 
     dest = base.resolve() if base else "fhir_bundles/ and fhir_blind_bundles/"
-    print(f"\nBoth pipelines complete. Same {len(sids):,} patients across all outputs → {dest}")
+    print(
+        f"\nBoth pipelines complete. Same {len(sids):,} patients across all outputs → {dest}"
+    )
 
 
 def _add_batch_args(p):
     p.add_argument("--dsn", default=None, help="Override PostgreSQL DSN")
     p.add_argument("--output", default=None, help="Output directory")
-    p.add_argument("--limit", type=int, default=None, help="Max patients to process (default: 10000 when --random)")
-    p.add_argument("--offset", type=int, default=0, help="Skip first N patients (only used with --no-random)")
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Max patients to process (default: 50 when --random)",
+    )
+    p.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="Skip first N patients (only used with --no-random)",
+    )
     p.add_argument("--subject-ids", default=None, help="Comma-separated subject_ids")
-    p.add_argument("--random", action=argparse.BooleanOptionalAction, default=True,
-                   help="Random patient sample (default: on). Use --no-random for sequential.")
+    p.add_argument(
+        "--random",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Random patient sample (default: on). Use --no-random for sequential.",
+    )
     from etl.filters import add_filter_args
+
     add_filter_args(p)
 
 
@@ -236,24 +280,32 @@ Pipelines:
     p_load = sub.add_parser("load", help="Load MIMIC-IV CSVs into PostgreSQL")
     p_load.add_argument("--dsn", default=None)
     p_load.add_argument(
-        "--data-dir", default=None,
+        "--data-dir",
+        default=None,
         help="Path to MIMIC-IV data root containing hosp/ and icu/ (default: dataset/)",
     )
     p_load.add_argument(
-        "--note-dir", default=None,
+        "--note-dir",
+        default=None,
         help="Path to note directory with discharge.csv.gz / radiology.csv.gz (default: dataset/note/)",
     )
     p_load.add_argument(
-        "--tables", default=None,
+        "--tables",
+        default=None,
         help="Comma-separated table names to reload only (e.g. prescriptions,emar_detail)",
     )
 
     # ── reindex ───────────────────────────────────────────────────────────────
-    p_reindex = sub.add_parser("reindex", help="Create subject_id indexes after loading (run once, makes queries fast)")
+    p_reindex = sub.add_parser(
+        "reindex",
+        help="Create subject_id indexes after loading (run once, makes queries fast)",
+    )
     p_reindex.add_argument("--dsn", default=None)
 
     # ── convert (flat NDJSON) ─────────────────────────────────────────────────
-    p_convert = sub.add_parser("convert", help="PostgreSQL → FHIR R4 NDJSON (one file per resource type)")
+    p_convert = sub.add_parser(
+        "convert", help="PostgreSQL → FHIR R4 NDJSON (one file per resource type)"
+    )
     p_convert.add_argument("--dsn", default=None)
     p_convert.add_argument("--output", default=None)
 
@@ -277,21 +329,32 @@ Pipelines:
         help="Run both pipelines on the same random patients (recommended)",
     )
     p_all.add_argument("--dsn", default=None, help="Override PostgreSQL DSN")
-    p_all.add_argument("--output", default=None, help="Base output directory (creates fhir_bundles/, fhir_blind_bundles/ inside)")
-    p_all.add_argument("--limit", type=int, default=10000, help="Number of random patients (default: 10000)")
-    p_all.add_argument("--subject-ids", default=None, help="Comma-separated subject_ids; skips random selection")
+    p_all.add_argument(
+        "--output",
+        default=None,
+        help="Base output directory (creates fhir_bundles/, fhir_blind_bundles/ inside)",
+    )
+    p_all.add_argument(
+        "--limit", type=int, default=50, help="Number of random patients (default: 50)"
+    )
+    p_all.add_argument(
+        "--subject-ids",
+        default=None,
+        help="Comma-separated subject_ids; skips random selection",
+    )
     from etl.filters import add_filter_args as _add_filter_args_all
+
     _add_filter_args_all(p_all)
 
     args = parser.parse_args()
 
     dispatch = {
-        "load":     cmd_load,
-        "reindex":  cmd_reindex,
-        "convert":  cmd_convert,
-        "bundle":   cmd_bundle,
+        "load": cmd_load,
+        "reindex": cmd_reindex,
+        "convert": cmd_convert,
+        "bundle": cmd_bundle,
         "fhir_blind": cmd_fhir_blind,
-        "all":      cmd_all,
+        "all": cmd_all,
     }
     dispatch[args.command](args)
 

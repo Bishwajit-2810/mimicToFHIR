@@ -84,11 +84,13 @@ bundle still contains the patient's full history).
 
 ### Service codes
 
-`CMED` (Cardiac Medicine), `CSURG` (Cardiac Surgery), `DENT`, `ENT`,
-`EYE` (Ophthalmology), `GU`, `GYN`, `MED` (Medicine), `NB`/`NBB` (Newborn),
-`NMED` (Neurology), `NSURG`, `OBS`, `OMED` (Oncology), `ORTHO`,
-`PSURG` (Plastic), `PSYCH`, `SURG`, `TRAUM`, `TSURG` (Thoracic),
-`VSURG` (Vascular).
+`CMED` (Cardiac Medicine), `CSURG` (Cardiac Surgery), `DENT` (Dentistry),
+`ENT` (Ear, Nose & Throat), `EYE` (Ophthalmology), `GU` (Genitourinary),
+`GYN` (Gynecology), `MED` (Medicine), `NB`/`NBB` (Newborn), `NMED` (Neurology),
+`NSURG` (Neurosurgery), `OBS` (Obstetrics), `OMED` (Oncology),
+`ORTHO` (Orthopedics), `PSURG` (Plastic Surgery), `PSYCH` (Psychiatry),
+`SURG` (Surgery), `TRAUM` (Trauma), `TSURG` (Thoracic Surgery),
+`VSURG` (Vascular Surgery).
 
 ---
 

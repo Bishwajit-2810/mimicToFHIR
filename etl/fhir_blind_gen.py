@@ -19,9 +19,8 @@ ALWAYS INCLUDED (all encounters):
     • DiagnosticReport   — microbiology (hosp.microbiologyevents)
     • Claim + ExplanationOfBenefit — DRG-based (hosp.drgcodes)
 
-INCLUDED FOR PRIOR ENCOUNTERS ONLY (blinded for the pivot encounter — the
-latest admission with a discharge note — and everything at/after it, including
-ED stays in that window):
+INCLUDED FOR PRIOR ENCOUNTERS ONLY (blinded for every hosp encounter at or after
+the most recent admission that has a discharge note, plus the latest ED stay):
     • Condition          — hosp ICD diagnoses (hosp.diagnoses_icd),
                            ED diagnoses (ed.diagnosis)
     • Procedure          — ICD-coded procedures (hosp.procedures_icd)
@@ -34,9 +33,8 @@ ED stays in that window):
                            note.radiology) with structured detail extensions
                            (note.discharge_detail, note.radiology_detail)
 
-INCLUDED FOR THE BLINDED RANGE IN TESTING VARIANT ONLY (include_notes=True):
-    • DocumentReference  — discharge + radiology notes for the pivot encounter
-                           and any encounters at/after it
+INCLUDED FOR BLINDED ENCOUNTERS IN TESTING VARIANT ONLY (include_notes=True):
+    • DocumentReference  — blinded encounters' discharge + radiology notes
 
 Usage:
     python -m etl.fhir_blind_gen [--dsn DSN] [--output DIR]
@@ -72,28 +70,53 @@ _CHART_ITEM_IDS = list(bb.CHART_LOINC.keys())
 # ── Per-patient pipeline ───────────────────────────────────────────────────────
 
 
-def _blind_pivot_hadm(cur, subject_id: int) -> int | None:
-    """Blinding pivot: the latest admission (by admittime) that has a discharge note.
+def _blinded_hadm_ids(cur, subject_id: int) -> tuple[set[int], int | None]:
+    """Determine which hospital admissions to blind.
 
-    Everything from this encounter onward (admittime >= pivot's admittime) is
-    blinded. Returns None when no admission has a discharge note, in which case
-    nothing is blinded.
+    The blinding boundary is the most recent admission that has a discharge note.
+    Every encounter at or after that admission's admittime is blinded — i.e. we
+    "remove everything till the last encounter that has notes" (inclusive). This
+    also blinds any more-recent admissions that have no notes of their own.
+
+    Returns (blinded_hadm_ids, cutoff_hadm_id). When the patient has no discharge
+    notes there is no note-based boundary, so we fall back to blinding the latest
+    encounter (the most recent admission by admittime). The cutoff is None only when
+    the patient has no hospital admissions at all.
     """
     cur.execute(
         """
-        SELECT a.hadm_id
+        SELECT a.hadm_id, a.admittime
         FROM hosp.admissions a
         WHERE a.subject_id = %s
-          AND EXISTS (
-              SELECT 1 FROM note.discharge d WHERE d.hadm_id = a.hadm_id
-          )
+          AND EXISTS (SELECT 1 FROM note.discharge d WHERE d.hadm_id = a.hadm_id)
         ORDER BY a.admittime DESC
         LIMIT 1
         """,
         (subject_id,),
     )
     row = cur.fetchone()
-    return row["hadm_id"] if row else None
+    if row is None:
+        # Fallback: no discharge notes — blind the latest admission instead.
+        cur.execute(
+            """
+            SELECT a.hadm_id, a.admittime
+            FROM hosp.admissions a
+            WHERE a.subject_id = %s
+            ORDER BY a.admittime DESC
+            LIMIT 1
+            """,
+            (subject_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return set(), None
+
+    cutoff_hadm = row["hadm_id"]
+    cur.execute(
+        "SELECT hadm_id FROM hosp.admissions WHERE subject_id = %s AND admittime >= %s",
+        (subject_id, row["admittime"]),
+    )
+    return {r["hadm_id"] for r in cur.fetchall()}, cutoff_hadm
 
 
 def convert_patient(
@@ -104,9 +127,12 @@ def convert_patient(
 ) -> tuple[int, int | None]:
     """Build a blinded bundle for one patient (no conditions, no medications).
 
-    include_notes=True adds DocumentReference (discharge + radiology).
+    Blinding removes diagnoses/treatments/notes for every encounter at or after
+    the most recent admission that has a discharge note (the cutoff). All earlier
+    encounters keep their full data. include_notes=True adds back the blinded
+    encounters' DocumentReferences (discharge + radiology).
 
-    Returns (entry_count, latest_hadm_id).
+    Returns (entry_count, cutoff_hadm_id).
     """
     entries: list[dict] = []
     _seen_ids: set[str] = set()
@@ -121,9 +147,11 @@ def convert_patient(
 
     patient_uid = bb._uuid("patient", subject_id)
 
-    # Blinding pivot: latest admission with a discharge note. Everything from
-    # this encounter onward is blinded; also recorded in the bundle meta tag.
-    latest_hadm = _blind_pivot_hadm(cur, subject_id)
+    # Blinding boundary: every encounter at or after the most recent admission
+    # that has a discharge note is blinded. latest_hadm = that cutoff admission
+    # (also used for the bundle meta tag). blinded_list drives the SQL filters.
+    blinded_hadms, latest_hadm = _blinded_hadm_ids(cur, subject_id)
+    blinded_list = list(blinded_hadms)
 
     # ── Organization ─────────────────────────────────────────────────────────
     add(bb.build_organization())
@@ -170,7 +198,9 @@ def convert_patient(
         """,
         (subject_id,),
     )
-    service_per_hadm: dict[int, str] = {r["hadm_id"]: r["curr_service"] for r in cur.fetchall()}
+    service_per_hadm: dict[int, str] = {
+        r["hadm_id"]: r["curr_service"] for r in cur.fetchall()
+    }
 
     cur.execute(
         """
@@ -191,20 +221,6 @@ def convert_patient(
         (subject_id,),
     )
     admissions = cur.fetchall()
-
-    # Blinded encounters: the pivot admission and every admission at/after it
-    # (by admittime). Empty when there is no discharge-note encounter — nothing
-    # is blinded in that case.
-    pivot_admittime = next(
-        (adm["admittime"] for adm in admissions if adm["hadm_id"] == latest_hadm),
-        None,
-    )
-    blinded_hadms: list[int] = (
-        [adm["hadm_id"] for adm in admissions if adm["admittime"] >= pivot_admittime]
-        if pivot_admittime is not None
-        else []
-    )
-
     hosp_enc_uids: dict[int, str] = {}
     for adm in admissions:
         p_uid = provider_uids.get(adm.get("admit_provider_id") or "")
@@ -233,25 +249,25 @@ def convert_patient(
         icu_enc_uids[icu["stay_id"]] = enc["id"]
         add(enc)
 
-    # ── ED encounters — blinded same as the hospital pivot ───────────────────
-    # An ED stay is blinded when its admission is blinded, or when it began at/
-    # after the pivot's admittime (the ED visit that fed the pivot admission has
-    # intime before admittime, so the hadm check alone would miss it).
+    # ── Latest ED stay id — blinded same as latest hospital encounter ────────
+    cur.execute(
+        "SELECT stay_id FROM ed.edstays WHERE subject_id = %s ORDER BY intime DESC LIMIT 1",
+        (subject_id,),
+    )
+    _row = cur.fetchone()
+    latest_ed_stay = _row["stay_id"] if _row else None
+
+    # ── ED encounters ─────────────────────────────────────────────────────────
     cur.execute(
         "SELECT * FROM ed.edstays WHERE subject_id = %s ORDER BY intime",
         (subject_id,),
     )
     ed_enc_uids: dict[int, str] = {}
-    blinded_ed_stays: list[int] = []
     for row in cur.fetchall():
         hosp_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
         enc = bb.build_encounter_ed(row, patient_uid, hosp_uid)
         ed_enc_uids[row["stay_id"]] = enc["id"]
         add(enc)
-        if pivot_admittime is not None and (
-            row.get("hadm_id") in blinded_hadms or row["intime"] >= pivot_admittime
-        ):
-            blinded_ed_stays.append(row["stay_id"])
 
     # ── ED triage observations (always included — vitals, not diagnosis/treatment) ──
     cur.execute(
@@ -276,36 +292,39 @@ def convert_patient(
                 add(obs)
 
     # ── ED conditions (prior ED stays only) ───────────────────────────────────
-    cur.execute(
-        "SELECT * FROM ed.diagnosis WHERE subject_id = %s AND NOT (stay_id = ANY(%s::int[])) ORDER BY stay_id, seq_num",
-        (subject_id, blinded_ed_stays),
-    )
-    for row in cur.fetchall():
-        enc_uid = ed_enc_uids.get(row["stay_id"])
-        if enc_uid:
-            add(bb.build_ed_condition(row, patient_uid, enc_uid))
+    if latest_ed_stay is not None:
+        cur.execute(
+            "SELECT * FROM ed.diagnosis WHERE subject_id = %s AND stay_id != %s ORDER BY stay_id, seq_num",
+            (subject_id, latest_ed_stay),
+        )
+        for row in cur.fetchall():
+            enc_uid = ed_enc_uids.get(row["stay_id"])
+            if enc_uid:
+                add(bb.build_ed_condition(row, patient_uid, enc_uid))
 
     # ── ED medication reconciliation (prior ED stays only) ────────────────────
-    cur.execute(
-        "SELECT * FROM ed.medrecon WHERE subject_id = %s AND NOT (stay_id = ANY(%s::int[])) ORDER BY stay_id, charttime",
-        (subject_id, blinded_ed_stays),
-    )
-    for row in cur.fetchall():
-        enc_uid = ed_enc_uids.get(row["stay_id"])
-        if enc_uid:
-            add(bb.build_ed_medrecon(row, patient_uid, enc_uid))
+    if latest_ed_stay is not None:
+        cur.execute(
+            "SELECT * FROM ed.medrecon WHERE subject_id = %s AND stay_id != %s ORDER BY stay_id, charttime",
+            (subject_id, latest_ed_stay),
+        )
+        for row in cur.fetchall():
+            enc_uid = ed_enc_uids.get(row["stay_id"])
+            if enc_uid:
+                add(bb.build_ed_medrecon(row, patient_uid, enc_uid))
 
     # ── ED pyxis dispenses (prior ED stays only) ──────────────────────────────
-    cur.execute(
-        "SELECT * FROM ed.pyxis WHERE subject_id = %s AND NOT (stay_id = ANY(%s::int[])) ORDER BY stay_id, charttime",
-        (subject_id, blinded_ed_stays),
-    )
-    for row in cur.fetchall():
-        enc_uid = ed_enc_uids.get(row["stay_id"])
-        if enc_uid:
-            add(bb.build_ed_pyxis(row, patient_uid, enc_uid))
+    if latest_ed_stay is not None:
+        cur.execute(
+            "SELECT * FROM ed.pyxis WHERE subject_id = %s AND stay_id != %s ORDER BY stay_id, charttime",
+            (subject_id, latest_ed_stay),
+        )
+        for row in cur.fetchall():
+            enc_uid = ed_enc_uids.get(row["stay_id"])
+            if enc_uid:
+                add(bb.build_ed_pyxis(row, patient_uid, enc_uid))
 
-    # ── CONDITIONS — prior encounters only (blinded range removed) ───────────
+    # ── CONDITIONS — prior encounters only (blinded encounters excluded) ──────
     cur.execute(
         """
         SELECT d.*, a.admittime, i.long_title
@@ -313,24 +332,24 @@ def convert_patient(
         LEFT JOIN hosp.admissions a ON d.hadm_id = a.hadm_id
         LEFT JOIN hosp.d_icd_diagnoses i
                ON d.icd_code = i.icd_code AND d.icd_version = i.icd_version
-        WHERE d.subject_id = %s AND NOT (d.hadm_id = ANY(%s::int[]))
+        WHERE d.subject_id = %s AND d.hadm_id != ALL(%s::bigint[])
         ORDER BY d.hadm_id, d.seq_num
         """,
-        (subject_id, blinded_hadms),
+        (subject_id, blinded_list),
     )
     for row in cur.fetchall():
         enc_uid = hosp_enc_uids.get(row["hadm_id"])
         if enc_uid:
             add(bb.build_condition(row, patient_uid, enc_uid))
 
-    # ── MEDICATIONS — prior encounters only (blinded range removed) ──────────
+    # ── MEDICATIONS — prior encounters only (blinded encounters excluded) ─────
     cur.execute(
         """
         SELECT * FROM hosp.prescriptions
-        WHERE subject_id = %s AND NOT (hadm_id = ANY(%s::int[]))
+        WHERE subject_id = %s AND hadm_id != ALL(%s::bigint[])
         ORDER BY hadm_id, starttime
         """,
-        (subject_id, blinded_hadms),
+        (subject_id, blinded_list),
     )
     for row in cur.fetchall():
         enc_uid = hosp_enc_uids.get(row["hadm_id"])
@@ -356,17 +375,17 @@ def convert_patient(
         add(claim)
         add(bb.build_eob(adm, patient_uid, bb.BIDMC_UUID, p_uid, claim["id"], enc_uid))
 
-    # ── Procedures (ICD) — prior encounters only (blinded range removed as treatment) ──
+    # ── Procedures (ICD) — prior encounters only (blinded encounters excluded) ──
     cur.execute(
         """
         SELECT p.*, i.long_title
         FROM hosp.procedures_icd p
         LEFT JOIN hosp.d_icd_procedures i
                ON p.icd_code = i.icd_code AND p.icd_version = i.icd_version
-        WHERE p.subject_id = %s AND NOT (p.hadm_id = ANY(%s::int[]))
+        WHERE p.subject_id = %s AND p.hadm_id != ALL(%s::bigint[])
         ORDER BY p.hadm_id, p.seq_num
         """,
-        (subject_id, blinded_hadms),
+        (subject_id, blinded_list),
     )
     for row in cur.fetchall():
         enc_uid = hosp_enc_uids.get(row["hadm_id"])
@@ -484,34 +503,34 @@ def convert_patient(
         if enc_uid:
             add(bb.build_output_observation(row, patient_uid, enc_uid))
 
-    # ── ICU input events (blinded range removed) — capped per patient ─────────
+    # ── ICU input events (blinded encounters excluded) — capped per patient ───
     cur.execute(
         """
         SELECT ie.*, d.label
         FROM icu.inputevents ie
         LEFT JOIN icu.d_items d ON ie.itemid = d.itemid
-        WHERE ie.subject_id = %s AND NOT (ie.hadm_id = ANY(%s::int[]))
+        WHERE ie.subject_id = %s AND ie.hadm_id != ALL(%s::bigint[])
         ORDER BY ie.starttime DESC
         LIMIT 2000
         """,
-        (subject_id, blinded_hadms),
+        (subject_id, blinded_list),
     )
     for row in cur.fetchall():
         enc_uid = icu_enc_uids.get(row["stay_id"])
         if enc_uid:
             add(bb.build_input_event(row, patient_uid, enc_uid))
 
-    # ── ICU ingredient events (blinded range removed) — capped per patient ────
+    # ── ICU ingredient events (blinded encounters excluded) — capped per patient ─
     cur.execute(
         """
         SELECT ige.*, d.label
         FROM icu.ingredientevents ige
         LEFT JOIN icu.d_items d ON ige.itemid = d.itemid
-        WHERE ige.subject_id = %s AND NOT (ige.hadm_id = ANY(%s::int[]))
+        WHERE ige.subject_id = %s AND ige.hadm_id != ALL(%s::bigint[])
         ORDER BY ige.starttime DESC
         LIMIT 2000
         """,
-        (subject_id, blinded_hadms),
+        (subject_id, blinded_list),
     )
     for row in cur.fetchall():
         enc_uid = icu_enc_uids.get(row["stay_id"])
@@ -542,15 +561,15 @@ def convert_patient(
         for resource in bb.build_diagnostic_report(group_list, patient_uid, enc_uid):
             add(resource)
 
-    # ── Clinical notes — prior encounters always included, blinded range removed ──
+    # ── Clinical notes — prior encounters always included, blinded encounters excluded ──
     cur.execute(
         """
         SELECT * FROM note.discharge
-        WHERE subject_id = %s AND NOT (hadm_id = ANY(%s::int[]))
+        WHERE subject_id = %s AND hadm_id != ALL(%s::bigint[])
         ORDER BY charttime DESC NULLS LAST
         LIMIT 20
         """,
-        (subject_id, blinded_hadms),
+        (subject_id, blinded_list),
     )
     for row in cur.fetchall():
         enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
@@ -559,16 +578,20 @@ def convert_patient(
             (row["note_id"],),
         )
         detail = cur.fetchall()
-        add(bb.build_document_reference(row, patient_uid, enc_uid, detail_rows=list(detail)))
+        add(
+            bb.build_document_reference(
+                row, patient_uid, enc_uid, detail_rows=list(detail)
+            )
+        )
 
     cur.execute(
         """
         SELECT * FROM note.radiology
-        WHERE subject_id = %s AND NOT (hadm_id = ANY(%s::int[]))
+        WHERE subject_id = %s AND hadm_id != ALL(%s::bigint[])
         ORDER BY charttime DESC NULLS LAST
         LIMIT 20
         """,
-        (subject_id, blinded_hadms),
+        (subject_id, blinded_list),
     )
     for row in cur.fetchall():
         enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
@@ -577,18 +600,22 @@ def convert_patient(
             (row["note_id"],),
         )
         detail = cur.fetchall()
-        add(bb.build_document_reference(row, patient_uid, enc_uid, detail_rows=list(detail)))
+        add(
+            bb.build_document_reference(
+                row, patient_uid, enc_uid, detail_rows=list(detail)
+            )
+        )
 
-    # ── Testing variant: also include the blinded range's notes ───────────────
-    if include_notes and blinded_hadms:
+    # ── Testing variant: also include the blinded encounters' notes ───────────
+    if include_notes and blinded_list:
         cur.execute(
             """
             SELECT * FROM note.discharge
-            WHERE subject_id = %s AND hadm_id = ANY(%s::int[])
+            WHERE subject_id = %s AND hadm_id = ANY(%s::bigint[])
             ORDER BY charttime DESC NULLS LAST
             LIMIT 20
             """,
-            (subject_id, blinded_hadms),
+            (subject_id, blinded_list),
         )
         for row in cur.fetchall():
             enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
@@ -597,16 +624,20 @@ def convert_patient(
                 (row["note_id"],),
             )
             detail = cur.fetchall()
-            add(bb.build_document_reference(row, patient_uid, enc_uid, detail_rows=list(detail)))
+            add(
+                bb.build_document_reference(
+                    row, patient_uid, enc_uid, detail_rows=list(detail)
+                )
+            )
 
         cur.execute(
             """
             SELECT * FROM note.radiology
-            WHERE subject_id = %s AND hadm_id = ANY(%s::int[])
+            WHERE subject_id = %s AND hadm_id = ANY(%s::bigint[])
             ORDER BY charttime DESC NULLS LAST
             LIMIT 20
             """,
-            (subject_id, blinded_hadms),
+            (subject_id, blinded_list),
         )
         for row in cur.fetchall():
             enc_uid = hosp_enc_uids.get(row["hadm_id"]) if row.get("hadm_id") else None
@@ -615,12 +646,19 @@ def convert_patient(
                 (row["note_id"],),
             )
             detail = cur.fetchall()
-            add(bb.build_document_reference(row, patient_uid, enc_uid, detail_rows=list(detail)))
+            add(
+                bb.build_document_reference(
+                    row, patient_uid, enc_uid, detail_rows=list(detail)
+                )
+            )
 
     # ── Write bundle ──────────────────────────────────────────────────────────
     bundle = bb.build_bundle(entries, latest_hadm_id=latest_hadm)
     out_path = output_dir / f"{subject_id}.json"
-    out_path.write_text(json.dumps(bb._sanitize_for_json(bundle), default=str, indent=2), encoding="utf-8")
+    out_path.write_text(
+        json.dumps(bb._sanitize_for_json(bundle), default=str, indent=2),
+        encoding="utf-8",
+    )
     return len(entries), latest_hadm
 
 
@@ -642,8 +680,10 @@ def convert(
     print(f"{variant} FHIR Generator")
     print(f"  DSN    : {dsn}")
     print(f"  Output : {output_dir.resolve()}/")
-    print(f"  Mode   : pivot = latest discharge-note encounter; that encounter and everything after it blinded")
-    print(f"  Notes  : prior encounters always included; blinded range {'included' if include_notes else 'excluded'}\n")
+    print(f"  Mode   : Conditions + Medications excluded for latest encounter only")
+    print(
+        f"  Notes  : prior encounters always included; latest {'included' if include_notes else 'excluded'}\n"
+    )
 
     conn = psycopg2.connect(dsn)
     conn.set_session(readonly=True, autocommit=True)
@@ -652,7 +692,9 @@ def convert(
     if subject_ids is not None:
         sids = subject_ids
     else:
-        effective_limit = limit if limit is not None else (10000 if random_sample else None)
+        effective_limit = (
+            limit if limit is not None else (50 if random_sample else None)
+        )
         if random_sample:
             query = "SELECT subject_id FROM hosp.patients ORDER BY RANDOM()"
         else:
@@ -672,7 +714,9 @@ def convert(
     errors = 0
     for i, sid in enumerate(sids, 1):
         try:
-            n, latest_hadm = convert_patient(cur, sid, output_dir, include_notes=include_notes)
+            n, latest_hadm = convert_patient(
+                cur, sid, output_dir, include_notes=include_notes
+            )
             total_entries += n
             print(
                 f"  [{i:{width}d}/{total}]  subject {sid:>10}  "
@@ -685,7 +729,9 @@ def convert(
     cur.close()
     conn.close()
 
-    print(f"\nDone. {total - errors:,}/{total:,} bundles, {total_entries:,} total entries.")
+    print(
+        f"\nDone. {total - errors:,}/{total:,} bundles, {total_entries:,} total entries."
+    )
     if errors:
         print(f"  {errors} patient(s) skipped due to errors.")
         sys.exit(1)
@@ -704,7 +750,9 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--limit", type=int, default=None, help="Max patients to process")
     p.add_argument("--offset", type=int, default=0, help="Skip first N patients")
     p.add_argument("--subject-ids", default=None, help="Comma-separated subject_ids")
-    p.add_argument("--patient", type=int, default=None, help="Single patient subject_id")
+    p.add_argument(
+        "--patient", type=int, default=None, help="Single patient subject_id"
+    )
     return p.parse_args()
 
 
@@ -722,7 +770,11 @@ if __name__ == "__main__":
         conn.close()
         print(f"subject {args.patient}: {n} entries → {out}/{args.patient}.json")
     else:
-        sids = [int(s.strip()) for s in args.subject_ids.split(",")] if args.subject_ids else None
+        sids = (
+            [int(s.strip()) for s in args.subject_ids.split(",")]
+            if args.subject_ids
+            else None
+        )
         convert(
             dsn=args.dsn,
             output_dir=out,

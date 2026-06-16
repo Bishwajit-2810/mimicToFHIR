@@ -52,13 +52,13 @@ _NAME_TO_CODE = {display.lower(): code for code, display in _SERVICE_DISPLAY.ite
 #   (arg dest, db column, slug label)
 # Several flags can target the same column (race / ethnicity) — that's fine.
 _ADMISSION_TEXT_FILTERS = [
-    ("race",               "race",               "race"),
-    ("ethnicity",          "race",               "ethnicity"),
-    ("insurance",          "insurance",          "insurance"),
-    ("language",           "language",           "language"),
-    ("marital_status",     "marital_status",     "marital"),
-    ("admission_type",     "admission_type",     "admissiontype"),
-    ("admit_source",       "admission_location", "admitsource"),
+    ("race", "race", "race"),
+    ("ethnicity", "race", "ethnicity"),
+    ("insurance", "insurance", "insurance"),
+    ("language", "language", "language"),
+    ("marital_status", "marital_status", "marital"),
+    ("admission_type", "admission_type", "admissiontype"),
+    ("admit_source", "admission_location", "admitsource"),
     ("discharge_location", "discharge_location", "discharge"),
 ]
 
@@ -85,26 +85,69 @@ def normalize_service(value: str) -> str:
 
 def add_filter_args(parser: argparse.ArgumentParser) -> None:
     """Attach cohort-filter options to a subcommand parser."""
-    g = parser.add_argument_group("cohort filters (extract a subset into filtered/<slug>/)")
+    g = parser.add_argument_group(
+        "cohort filters (extract a subset into filtered/<slug>/)"
+    )
     # Demographics
     g.add_argument("--gender", default=None, help="male | female")
-    g.add_argument("--min-age", type=int, default=None, help="Minimum anchor_age (inclusive)")
-    g.add_argument("--max-age", type=int, default=None, help="Maximum anchor_age (inclusive)")
+    g.add_argument(
+        "--min-age", type=int, default=None, help="Minimum anchor_age (inclusive)"
+    )
+    g.add_argument(
+        "--max-age", type=int, default=None, help="Maximum anchor_age (inclusive)"
+    )
     g.add_argument("--anchor-year", type=int, default=None, help="Exact anchor_year")
-    g.add_argument("--anchor-year-group", default=None, help="Match anchor_year_group containing this text")
-    g.add_argument("--deceased", action="store_true", help="Only patients with a recorded date of death")
-    g.add_argument("--race", default=None, help="Match patients whose race contains this text")
-    g.add_argument("--ethnicity", default=None, help="Match race/ethnicity text (e.g. hispanic)")
-    g.add_argument("--language", default=None, help="Match language containing this text")
-    g.add_argument("--marital-status", default=None, help="Match marital_status containing this text")
+    g.add_argument(
+        "--anchor-year-group",
+        default=None,
+        help="Match anchor_year_group containing this text",
+    )
+    g.add_argument(
+        "--deceased",
+        action="store_true",
+        help="Only patients with a recorded date of death",
+    )
+    g.add_argument(
+        "--race", default=None, help="Match patients whose race contains this text"
+    )
+    g.add_argument(
+        "--ethnicity", default=None, help="Match race/ethnicity text (e.g. hispanic)"
+    )
+    g.add_argument(
+        "--language", default=None, help="Match language containing this text"
+    )
+    g.add_argument(
+        "--marital-status",
+        default=None,
+        help="Match marital_status containing this text",
+    )
     # Encounter
-    g.add_argument("--service", default=None,
-                   help="Hospital service code (MED) or name (medicine). See README for the full list.")
-    g.add_argument("--admission-type", default=None, help="Match admission_type containing this text")
-    g.add_argument("--admit-source", default=None, help="Match admission_location (admit source)")
-    g.add_argument("--discharge-location", default=None, help="Match discharge_location (disposition)")
-    g.add_argument("--insurance", default=None, help="Match patients whose insurance contains this text")
-    g.add_argument("--expired", action="store_true", help="Only patients with an in-hospital death")
+    g.add_argument(
+        "--service",
+        default=None,
+        help="Hospital service code (MED) or name (medicine). See README for the full list.",
+    )
+    g.add_argument(
+        "--admission-type",
+        default=None,
+        help="Match admission_type containing this text",
+    )
+    g.add_argument(
+        "--admit-source", default=None, help="Match admission_location (admit source)"
+    )
+    g.add_argument(
+        "--discharge-location",
+        default=None,
+        help="Match discharge_location (disposition)",
+    )
+    g.add_argument(
+        "--insurance",
+        default=None,
+        help="Match patients whose insurance contains this text",
+    )
+    g.add_argument(
+        "--expired", action="store_true", help="Only patients with an in-hospital death"
+    )
 
 
 def extract_filters(args) -> dict:
@@ -167,8 +210,14 @@ def default_output_base(filters: dict) -> Path:
     return FILTERED_ROOT / slug_for(filters)
 
 
-def select_subject_ids(cur, filters: dict, *, random_sample: bool = True,
-                       limit: int | None = None, offset: int = 0) -> list[int]:
+def select_subject_ids(
+    cur,
+    filters: dict,
+    *,
+    random_sample: bool = True,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[int]:
     """Return subject_ids matching ``filters``.
 
     ``cur`` is a psycopg2 cursor (RealDictCursor expected). Selection mirrors the
@@ -227,7 +276,7 @@ def select_subject_ids(cur, filters: dict, *, random_sample: bool = True,
     query = f"SELECT subject_id FROM ({inner}) t ORDER BY {order}"
     if not random_sample and offset:
         query += f" OFFSET {int(offset)}"
-    effective_limit = limit if limit is not None else (10000 if random_sample else None)
+    effective_limit = limit if limit is not None else (50 if random_sample else None)
     if effective_limit:
         query += f" LIMIT {int(effective_limit)}"
 
